@@ -1,0 +1,861 @@
+Your brief already has a good architecture and roadmap. The main thing missing before handing work to coding agents is removing implementation ambiguity: exact schemas, boundaries, interfaces, inputs/outputs, and acceptance criteria.
+
+The project deliberately starts with a manageable arXiv subset in Postgres, then builds the embedding pipeline against pgvector before attempting the chat loop or other vector databases. That ordering is sensible because Postgres is intended to remain the system for structured facts and filters, while the vector store is responsible for semantic retrieval.
+
+I would expand the beginning of the project like this.
+
+---
+
+# Step 0 — Freeze the v1 technical contract
+
+This is a short preparatory step, but it will make agent-generated code dramatically more consistent.
+
+The brief intentionally leaves some implementation choices open—for example Spring AI versus LangChain4j and the specific LLM/embedding provider. Before agents start coding, choose one v1 path.
+
+For the first implementation, I would use:
+
+- Java + Spring Boot
+- Spring AI
+- Maven or Gradle, but pick one and don't mix them
+- Postgres + pgvector in Docker Compose
+- Flyway for schema migrations
+- Jackson for reading the arXiv JSON data
+- one hosted embedding provider initially
+- no frontend yet
+- no chat model yet
+- no Milvus or Chroma yet
+
+The important architectural decision is that application code should not know that pgvector is the final vector store.
+
+Define an application-level abstraction roughly equivalent to:
+
+VectorStoreGateway
+    upsert(List<EmbeddedDocument>)
+    similaritySearch(SearchRequest)
+    deleteByPaperIds(...)
+
+Spring AI's own abstraction may ultimately implement most of this for you, but having an explicit conceptual boundary prevents later Milvus/Chroma work from leaking throughout the application.
+
+Similarly, define the relational side separately:
+
+PaperRepository
+    save(...)
+    findById(...)
+    findByIds(...)
+    search/filter/count...
+
+This separation matters because the eventual architecture needs to combine vector hits with authoritative Postgres records for citations.
+
+### Definition of done for Step 0
+
+Before any substantial coding agent is unleashed, you should be able to answer these without ambiguity:
+
+Java version:
+Build system:
+Spring Boot version:
+AI framework: Spring AI
+Embedding provider:
+Embedding model:
+Embedding dimension:
+Postgres version:
+Migration system:
+Initial arXiv categories:
+Initial dataset size/date range:
+
+Put these in something like docs/decisions.md.
+
+That file becomes part of every future coding-agent prompt.
+
+---
+
+# Step 1 — Dataset slice and relational Postgres model
+
+## Objective
+
+Create a repeatable process that takes the original arXiv metadata dataset and populates a clean relational Postgres database with the subset used throughout the project.
+
+Do not create embeddings yet.
+
+At the end of this step you should be able to inspect the database with SQL and understand exactly what data will later enter the RAG pipeline.
+
+The source dataset contains roughly 2.7 million records and includes titles, abstracts, authors, categories, dates, DOI and journal metadata. The brief proposes starting with categories such as cs.CL, cs.AI, and cs.LG rather than immediately processing the full corpus.
+
+## 1.1 Decide the exact v1 slice
+
+Do not tell an agent merely:
+
+Load a manageable subset.
+
+Give it deterministic rules.
+
+For example, I would define:
+
+Included categories:
+- cs.CL
+- cs.AI
+- cs.LG
+
+Selection rule:
+Include a paper if ANY of its categories matches one of those categories.
+
+Date range:
+No date restriction initially.
+
+Maximum:
+Optional configurable record limit for developer machines.
+
+Default dev limit:
+50,000 papers.
+
+The exact 50,000 is my recommendation, not something specified in your brief.
+
+Make all of these configuration rather than hardcoded logic:
+
+arxiv:
+  import:
+    categories:
+      - cs.CL
+      - cs.AI
+      - cs.LG
+    max-records: 50000
+
+Later you should be able to change:
+
+max-records: 50000
+
+to:
+
+max-records: null
+
+without changing Java code.
+
+---
+
+## 1.2 Preserve the original arXiv identifier
+
+Your brief says the relational table should contain fields such as:
+
+id
+title
+authors
+categories
+submitted_date
+doi
+journal_ref
+
+I would distinguish the application's database key from arXiv's identifier:
+
+papers
+
+id                 BIGINT primary key
+arxiv_id           VARCHAR unique not null
+title              TEXT not null
+abstract_text      TEXT not null
+authors            ...
+categories         ...
+submitted_date     DATE
+doi                VARCHAR
+journal_ref        TEXT
+created_at
+updated_at
+
+Do not call the abstract column simply abstract, because that is confusing in Java and SQL contexts. Something like abstract_text is clearer.
+
+### Authors and categories
+
+There are two reasonable designs:
+
+Simple v1
+
+Store them in PostgreSQL arrays:
+
+authors TEXT[]
+categories TEXT[]
+
+More relational
+
+Create:
+
+papers
+authors
+paper_authors
+categories
+paper_categories
+
+For this learning project, I would start with arrays unless querying individual authors becomes awkward. The project is about RAG/vector-store behavior rather than normalization exercises.
+
+The important requirement is that queries such as:
+
+papers in cs.CV
+papers submitted after X
+papers by author Y
+
+must be possible efficiently.
+
+---
+
+# 1.3 Create migrations, not automatic Hibernate schema creation
+
+The first coding agent should create explicit migrations.
+
+For example:
+
+V001__create_papers.sql
+V002__create_paper_indexes.sql
+
+Useful indexes should include at minimum:
+
+arxiv_id
+submitted_date
+categories
+
+and whatever representation you select for authors.
+
+Do not rely on:
+
+spring.jpa.hibernate.ddl-auto=create
+
+as the database definition.
+
+You want database structure to be reproducible because later pgvector, Milvus and Chroma experiments should run against the same relational dataset.
+
+---
+
+# 1.4 Build the importer as a separate application operation
+
+Do not put dataset loading into normal Spring application startup.
+
+Instead expose something like:
+
+./mvnw spring-boot:run \
+  -Dspring-boot.run.arguments="import-arxiv /data/arxiv-metadata-oai-snapshot.json"
+
+or a dedicated executable command.
+
+Conceptually:
+
+ArxivDatasetReader
+        ↓
+ArxivRecord
+        ↓
+ArxivRecordFilter
+        ↓
+PaperMapper
+        ↓
+PaperRepository
+        ↓
+Postgres
+
+Each responsibility should be separately testable.
+
+### ArxivDatasetReader
+
+Responsibilities:
+
+- stream records rather than load the entire 2.7M-record file into RAM
+- deserialize one paper at a time
+- report malformed records
+- continue or fail according to a defined policy
+
+### ArxivRecordFilter
+
+Responsibilities:
+
+- check categories
+- check optional date constraints
+- enforce optional record limit
+
+### PaperMapper
+
+Responsibilities:
+
+- normalize whitespace
+- map dataset fields into the database representation
+- preserve the original arXiv identifier
+- convert dates consistently
+- preserve missing DOI/journal reference as NULL
+
+### PaperRepository
+
+Responsibilities:
+
+- insert/update batches
+- avoid duplicates
+- allow the importer to be run twice safely
+
+---
+
+# 1.5 Make ingestion idempotent
+
+This will become very important once agents start experimenting.
+
+Running:
+
+import-arxiv
+
+twice must not create twice as many papers.
+
+Use:
+
+UNIQUE(arxiv_id)
+
+and either:
+
+INSERT ... ON CONFLICT DO UPDATE
+
+or:
+
+INSERT ... ON CONFLICT DO NOTHING
+
+depending on whether you want refreshed metadata.
+
+I would choose update/upsert.
+
+The same principle should later apply to embeddings.
+
+---
+
+# 1.6 Add import statistics
+
+At the end of an import, print something like:
+
+arXiv import complete
+
+Records read:       2,710,324
+Category matched:      63,412
+Imported:              50,000
+Updated:                    0
+Skipped:            2,646,912
+Invalid records:             0
+Elapsed:                 ...
+
+These numbers are incredibly useful when agents change ingestion code.
+
+Also persist or log:
+
+dataset file name
+dataset file checksum
+import timestamp
+configured categories
+configured limit
+
+That makes benchmark results later reproducible.
+
+---
+
+# 1.7 Add basic relational sanity queries
+
+Before embeddings exist, verify the data manually and automatically.
+
+Examples:
+
+SELECT COUNT(*) FROM papers;
+
+SELECT category, COUNT(...)
+...
+
+SELECT *
+FROM papers
+WHERE submitted_date >= ...
+
+and eventually an author query equivalent to the structured use case in the brief:
+
+How many papers has author Yoshua Bengio published in 2023?
+
+That question was deliberately included because it demonstrates something embeddings should not be used for.
+
+You don't need the chatbot to answer it yet. You just need to prove Postgres can.
+
+---
+
+# Step 1 acceptance criteria
+
+An agent should not declare this step complete until all of these are true:
+
+- Docker Compose starts Postgres successfully.
+- Database schema is created by migrations.
+- Import command accepts the arXiv metadata file.
+- Filtering categories are configuration-driven.
+- Importer streams rather than loading the entire dataset into memory.
+- Re-running the import creates no duplicate papers.
+- At least tens of thousands of relevant papers can be imported.
+- Every stored paper retains its arXiv ID.
+- Title and abstract are populated.
+- Authors, categories and dates are queryable.
+- Import statistics are printed.
+- Unit tests cover filtering and mapping.
+- An integration test verifies persistence against Postgres.
+- README explains exactly how to reproduce the import.
+
+At this point, create a Git tag or milestone such as:
+
+milestone/dataset-loaded
+
+Only then start embeddings.
+
+---
+
+# Step 2 — Embedding and pgvector ingestion pipeline
+
+## Objective
+
+Take papers already stored in Postgres, convert their textual representation into embeddings and place those vectors into pgvector.
+
+No chatbot yet.
+
+The output of this step should be:
+
+question-like text
+        ↓
+embedding
+        ↓
+similarity search
+        ↓
+top-K paper IDs
+
+You should be able to test semantic retrieval from a command line or integration test before involving an LLM.
+
+The brief specifically recommends pgvector first because it has the lowest operational overhead.
+
+---
+
+# 2.1 Define the retrievable document
+
+Your source brief says abstracts are substantial enough to produce useful embeddings without fetching full PDFs, and that full-paper ingestion should remain a stretch goal.
+
+For v1 I would define exactly one vector document per paper.
+
+Text:
+
+Title: <paper title>
+
+Abstract:
+<paper abstract>
+
+Do not implement sophisticated chunking yet.
+
+The conceptual object should be:
+
+RetrievalDocument {
+    String documentId;
+    String paperId;
+    String text;
+    Map<String, Object> metadata;
+}
+
+For example:
+
+{
+  "documentId": "arxiv:2401.12345",
+  "paperId": "2401.12345",
+  "text": "Title: ...\n\nAbstract:\n...",
+  "metadata": {
+    "categories": ["cs.CL", "cs.AI"],
+    "submittedDate": "2024-01-17"
+  }
+}
+
+Do not put the whole relational record into the vector DB.
+
+The canonical data remains Postgres.
+
+---
+
+# 2.2 Separate document construction from embedding
+
+Have a component equivalent to:
+
+Paper
+ ↓
+RetrievalDocumentFactory
+ ↓
+RetrievalDocument
+
+and another:
+
+RetrievalDocument
+ ↓
+EmbeddingClient
+ ↓
+EmbeddedDocument
+
+This becomes important when the stretch goal eventually introduces full PDFs and real chunking.
+
+The chatbot should not care whether a paper ultimately produces:
+
+1 chunk
+
+or:
+
+23 chunks
+
+So introduce a chunk/document identifier now even though v1 has one chunk.
+
+For example:
+
+paper:2401.12345:chunk:0
+
+---
+
+# 2.3 Enable pgvector through a migration
+
+Add something equivalent to:
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+Then define the storage needed by your selected Spring AI integration or your own repository.
+
+Important: the vector dimension is determined by the embedding model.
+
+Therefore it must be treated as part of the technical contract from Step 0.
+
+Changing embedding models later may require rebuilding the vector index.
+
+---
+
+# 2.4 Store enough metadata for retrieval, but not authority
+
+Every vector entry should contain at least:
+
+paper_id
+chunk_id
+categories
+submitted_date
+
+Possibly:
+
+title
+
+for debugging.
+
+But after retrieving results, the application should obtain authoritative display data from:
+
+PaperRepository
+
+not trust duplicated vector metadata.
+
+That's what will later enable:
+
+vector hit
+   ↓
+paper ID
+   ↓
+Postgres
+   ↓
+title + DOI/arXiv URL + authors
+
+which is necessary for your grounded citations architecture.
+
+---
+
+# 2.5 Implement batch embedding
+
+Do not call the embedding API once per paper in a naïve loop.
+
+Build a pipeline such as:
+
+Read 100 papers
+      ↓
+Create retrieval documents
+      ↓
+Batch embedding request
+      ↓
+Batch vector upsert
+      ↓
+checkpoint
+      ↓
+next 100
+
+Exact batch size should be configuration:
+
+rag:
+  ingestion:
+    batch-size: 100
+
+The actual optimum depends on the provider, so agents shouldn't bury it in the implementation.
+
+---
+
+# 2.6 Make vector ingestion resumable
+
+Assume eventually:
+
+50,000
+500,000
+2,700,000
+
+papers.
+
+A failure at paper 49,812 should not require starting from paper one.
+
+You need a way to determine:
+
+already embedded with model X?
+
+A useful conceptual record is:
+
+paper_id
+chunk_id
+embedding_model
+content_hash
+embedded_at
+
+The content_hash should be generated from the exact embedded text.
+
+Then:
+
+same paper
++ same model
++ same content hash
+= skip
+
+If the abstract changes:
+
+different hash
+= re-embed
+
+If the embedding model changes:
+
+different model
+= re-embed
+
+This will also make your later embedding-model stretch goal much easier.
+
+---
+
+# 2.7 Create a retrieval-only test interface
+
+Before building any chat functionality, create something like:
+
+./mvnw ... search \
+  "techniques for reducing hallucinations in language models"
+
+Expected output:
+
+Query:
+techniques for reducing hallucinations in language models
+
+Top 5:
+
+1. score: 0.87
+   arxiv: ...
+   title: ...
+
+2. score: 0.84
+   arxiv: ...
+   title: ...
+
+This is a crucial project boundary.
+
+If retrieval quality is bad here, adding an LLM won't fix it.
+
+---
+
+# 2.8 Define the retrieval API that later stores must implement
+
+By the end of Step 2, an application service should expose something conceptually like:
+
+List<VectorSearchResult> search(
+    String query,
+    int topK,
+    SearchFilter filter
+);
+
+with:
+
+VectorSearchResult {
+    String paperId;
+    String chunkId;
+    double score;
+}
+
+Notice what is not exposed:
+
+PGvector-specific SQL
+Postgres vector types
+Spring pgvector-specific classes
+
+The service layer should think only in terms of:
+
+similarity search
+top K
+filters
+results
+
+Later:
+
+PgVectorStoreGateway
+MilvusVectorStoreGateway
+ChromaVectorStoreGateway
+
+can implement the same contract.
+
+That directly supports the project's goal of swapping all three backends while keeping the retrieval pipeline unchanged.
+
+---
+
+# Step 2 acceptance criteria
+
+Do not move to RAG/chat until:
+
+- pgvector starts from Docker Compose.
+- pgvector extension is created by migration.
+- embedding model/configuration is externalized.
+- one retrieval document is generated per v1 paper.
+- exact embedding text format is documented.
+- ingestion operates in batches.
+- ingestion can resume safely after interruption.
+- re-running ingestion does not duplicate vectors.
+- paper IDs survive the entire process.
+- semantic search returns top-K results.
+- retrieval results can be resolved back to Postgres papers.
+- query and ingestion logic are not tightly coupled to pgvector.
+- integration tests demonstrate semantic retrieval.
+- no LLM generation is required to execute the test.
+
+A very good milestone test would be:
+
+Given:
+50,000 arXiv papers in Postgres
+and embeddings for all 50,000 in pgvector
+
+When:
+I search for
+"methods for reducing hallucinations in large language models"
+
+Then:
+the application returns 10 semantically relevant paper IDs
+
+And:
+each ID resolves to exactly one Postgres paper
+
+And:
+the output includes the paper's title and arXiv identifier.
+
+---
+
+# What should exist in the repository after these two steps
+
+I'd aim for something approximately like:
+
+project-root/
+├── compose.yaml
+├── README.md
+├── docs/
+│   ├── architecture.md
+│   ├── decisions.md
+│   └── dataset.md
+│
+├── src/main/java/.../
+│   ├── paper/
+│   │   ├── Paper.java
+│   │   ├── PaperRepository.java
+│   │   └── ...
+│   │
+│   ├── arxiv/
+│   │   ├── ArxivDatasetReader.java
+│   │   ├── ArxivRecord.java
+│   │   ├── ArxivRecordFilter.java
+│   │   └── ArxivImporter.java
+│   │
+│   ├── embedding/
+│   │   ├── RetrievalDocument.java
+│   │   ├── RetrievalDocumentFactory.java
+│   │   └── EmbeddingIngestionService.java
+│   │
+│   └── vector/
+│       ├── VectorStoreGateway.java
+│       ├── VectorSearchRequest.java
+│       ├── VectorSearchResult.java
+│       └── pgvector/
+│           └── PgVectorStoreGateway.java
+│
+├── src/main/resources/
+│   ├── application.yml
+│   └── db/migration/
+│       ├── V001__create_papers.sql
+│       ├── V002__paper_indexes.sql
+│       └── V003__enable_pgvector.sql
+│
+└── src/test/
+
+The exact package names aren't important. The boundaries are.
+
+---
+
+# How I would hand this to coding agents
+
+Don't give one agent:
+
+Build steps 1 and 2.
+
+Break the work into small tickets with independently verifiable outcomes.
+
+A good initial sequence is:
+
+1. Bootstrap project and Docker Compose
+   - Spring Boot skeleton
+   - Postgres
+   - Flyway
+   - health check
+
+2. Create relational paper schema
+   - migration
+   - domain model
+   - repository
+   - integration tests
+
+3. Implement arXiv JSON reader
+   - streaming
+   - source record mapping
+   - unit tests
+
+4. Implement filtering/import
+   - category configuration
+   - batch persistence
+   - idempotency
+   - import stats
+
+5. Add pgvector
+   - extension
+   - configuration
+   - integration smoke test
+
+6. Implement retrieval-document construction
+   - title + abstract format
+   - metadata
+   - content hash
+   - tests
+
+7. Implement embedding ingestion
+   - batching
+   - retries
+   - checkpoint/idempotency
+
+8. Implement semantic search
+   - query embedding
+   - top-K
+   - paper-ID resolution
+   - CLI/integration test
+
+Each agent should receive one ticket, the architecture/decisions files, and the acceptance criteria. That will produce much more coherent code than repeatedly asking an agent to “continue building the RAG app.”
+
+Once these pieces work, Step 3 becomes pleasantly small:
+
+user question
+   ↓
+embed question
+   ↓
+VectorStoreGateway.search()
+   ↓
+paper IDs
+   ↓
+PaperRepository.findByIds()
+   ↓
+construct grounded prompt
+   ↓
+LLM
+   ↓
+answer + citations
+
+That's exactly where you want to be before introducing generation: retrieval is already a tested subsystem instead of something hidden inside a giant “RAG service.”
