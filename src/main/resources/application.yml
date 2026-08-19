@@ -1,7 +1,9 @@
-arxiv:
-  import:
-    categories:
-      - cs.CL
-      - cs.AI
-      - cs.LG
-    max-records: 50000
+spring:
+  application:
+    name: arxiv-rag
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
