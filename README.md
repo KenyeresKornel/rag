@@ -42,6 +42,14 @@ The baseline exposes Spring Boot Actuator health information at:
 GET /actuator/health
 ```
 
+The initial UI shell is served by Spring Boot static resources at:
+
+```text
+GET /
+```
+
+Frontend assets live under `src/main/resources/static` and are packaged into the backend artifact by Maven's standard resource handling. There is intentionally no separate frontend build step yet.
+
 ## Package structure
 
 ```text
@@ -54,6 +62,19 @@ com.example.arxivrag
 ```
 
 Only package boundaries are created by this bootstrap ticket. Domain classes, repositories, importers, migrations, database infrastructure, and vector-store implementations are intentionally deferred to later tickets.
+
+## UI shell
+
+The app shell includes navigation and placeholder pages for:
+
+- System Status
+- Import
+- Papers
+- Search
+- Chat
+- Vector Stores
+- Benchmarks
+- Settings
 
 ## Repository documentation
 
