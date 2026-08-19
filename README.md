@@ -1,5 +1,7 @@
 # arxiv-rag
 
+[![CI](https://github.com/KenyeresKornel/rag/actions/workflows/ci.yml/badge.svg)](https://github.com/KenyeresKornel/rag/actions/workflows/ci.yml)
+
 Spring Boot baseline for the arXiv retrieval/RAG project.
 
 ## Baseline
@@ -88,3 +90,17 @@ The app shell includes navigation and placeholder pages for:
 2. Streaming arXiv dataset reader and importer.
 3. pgvector and embedding ingestion.
 4. Semantic retrieval and paper-ID resolution.
+
+## Continuous integration
+
+GitHub Actions runs the Maven build and unit tests on every pull request and on pushes to `main`. The workflow uses Java 21, caches Maven dependencies, and invokes the repository's Maven Wrapper:
+
+```bash
+./mvnw --batch-mode --no-transfer-progress clean verify
+```
+
+Surefire/Failsafe test reports and the Maven build log are uploaded as a GitHub Actions artifact named `maven-test-results-and-build-log`, including on failed CI runs.
+
+Before pushing the repository to GitHub, replace `YOUR_GITHUB_USERNAME` in the CI badge at the top of this README with the repository owner or organization name.
+
+Dependabot is configured to check Maven and GitHub Actions dependencies weekly.
