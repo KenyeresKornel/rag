@@ -1,0 +1,10 @@
+rag:
+  runtime:
+    profile: local
+  features:
+    import-enabled: true
+    papers-enabled: true
+    search-enabled: false
+    chat-enabled: false
+    vector-stores-enabled: false
+    benchmarks-enabled: false
