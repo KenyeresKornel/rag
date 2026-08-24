@@ -1,12 +1,6 @@
-spring:
-  application:
-    name: arxiv-rag
-  profiles:
-    default: local
-
 rag:
   runtime:
-    profile: local
+    profile: test
   features:
     import-enabled: false
     papers-enabled: false
@@ -14,9 +8,3 @@ rag:
     chat-enabled: false
     vector-stores-enabled: false
     benchmarks-enabled: false
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info

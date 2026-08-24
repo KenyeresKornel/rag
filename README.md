@@ -38,6 +38,12 @@ mvnw.cmd clean verify
 ./mvnw spring-boot:run
 ```
 
+Run with an explicit profile when demonstrating environment-specific settings:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
 The baseline exposes Spring Boot Actuator health information at:
 
 ```text
@@ -51,6 +57,14 @@ GET /
 ```
 
 Frontend assets live under `src/main/resources/static` and are packaged into the backend artifact by Maven's standard resource handling. There is intentionally no separate frontend build step yet.
+
+Safe runtime configuration is exposed at:
+
+```text
+GET /api/runtime-config
+```
+
+This endpoint is intentionally whitelisted and does not return secrets, tokens, API keys, passwords, or raw environment variables.
 
 ## Package structure
 
