@@ -26,9 +26,15 @@
                 <p class="eyebrow">Demo shell</p>
                 <h1 id="page-title">System Status</h1>
             </div>
-            <div class="environment-pill" id="environment-pill">Backend pending</div>
+            <div class="topbar-actions">
+                <div class="environment-pill" id="environment-pill">Backend pending</div>
+                <button class="icon-button" id="health-refresh-button" type="button" aria-label="Refresh backend health" title="Refresh backend health">
+                    &#8635;
+                </button>
+            </div>
         </header>
 
+        <div class="global-error hidden" id="global-error" role="alert"></div>
         <section id="page-content" class="page-card" aria-live="polite"></section>
     </main>
 </div>
