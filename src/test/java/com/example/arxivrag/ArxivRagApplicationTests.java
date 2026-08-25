@@ -48,6 +48,16 @@ class ArxivRagApplicationTests {
         assertThat(response.body()).doesNotContain("token");
     }
 
+    @Test
+    void exposesBackendHealth() throws Exception {
+        var response = get("/api/health");
+
+        assertThat(response.statusCode()).isBetween(200, 299);
+        assertThat(response.body()).contains("\"status\":\"UP\"");
+        assertThat(response.body()).contains("\"applicationName\":\"arxiv-rag\"");
+        assertThat(response.body()).contains("\"message\":\"Backend services are reachable.\"");
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                 .GET()

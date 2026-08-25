@@ -66,8 +66,38 @@ const navigation = document.querySelector("#navigation");
 const pageTitle = document.querySelector("#page-title");
 const pageContent = document.querySelector("#page-content");
 const environmentPill = document.querySelector("#environment-pill");
+const globalError = document.querySelector("#global-error");
+const healthRefreshButton = document.querySelector("#health-refresh-button");
 let runtimeConfig = null;
 let runtimeConfigError = null;
+let backendHealth = {
+    status: "checking",
+    message: "Checking backend health...",
+    checkedAt: null
+};
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function formatCheckedAt(value) {
+    return value ? new Date(value).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "Not checked yet";
+}
+
+function showGlobalError(message) {
+    globalError.textContent = message;
+    globalError.classList.remove("hidden");
+}
+
+function clearGlobalError() {
+    globalError.textContent = "";
+    globalError.classList.add("hidden");
+}
 
 function renderNavigation(activePageId) {
     navigation.innerHTML = pages
@@ -89,6 +119,11 @@ function renderPage() {
 
     if (page.id === "settings") {
         renderSettingsPage(page);
+        return;
+    }
+
+    if (page.id === "system-status") {
+        renderSystemStatusPage(page);
         return;
     }
 
@@ -118,28 +153,72 @@ function renderPage() {
     `;
 }
 
+function renderSystemStatusPage(page) {
+    const isUp = backendHealth.status === "UP";
+    const isChecking = backendHealth.status === "checking";
+    const statusLabel = backendHealth.status === "checking" ? "Checking..." : backendHealth.status;
+
+    pageContent.innerHTML = `
+        <div class="hero-grid">
+            <div>
+                <h2>${page.title}</h2>
+                <p class="placeholder-copy">${page.summary}</p>
+                <div class="health-panel ${isUp ? "ok" : isChecking ? "" : "error"}">
+                    <div>
+                        <span class="status-badge ${isUp ? "ok" : isChecking ? "" : "error"}">${escapeHtml(statusLabel)}</span>
+                        <h3>Backend API</h3>
+                        <p>${escapeHtml(backendHealth.message)}</p>
+                        <small>Last checked: ${escapeHtml(formatCheckedAt(backendHealth.checkedAt))}</small>
+                    </div>
+                    <button class="primary-button" type="button" data-health-refresh>Refresh</button>
+                </div>
+                <ul class="feature-list">
+                    ${page.details.map((detail) => `<li><strong>${detail}</strong><br><span>Placeholder area reserved for the upcoming feature story.</span></li>`).join("")}
+                </ul>
+            </div>
+            <aside>
+                <span class="status-badge ${isUp ? "ok" : isChecking ? "" : "error"}">${isUp ? "Ready" : isChecking ? "Checking" : "Needs attention"}</span>
+                <div class="metric-grid">
+                    <div class="metric">
+                        <strong>${escapeHtml(statusLabel)}</strong>
+                        <span>Backend</span>
+                    </div>
+                    <div class="metric">
+                        <strong>Not wired</strong>
+                        <span>Relational DB</span>
+                    </div>
+                    <div class="metric">
+                        <strong>Not wired</strong>
+                        <span>Vector store</span>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    `;
+}
+
 function renderSettingsPage(page) {
     const configMarkup = runtimeConfig
         ? `
             <div class="config-grid">
                 <div class="config-item">
                     <span>Application</span>
-                    <strong>${runtimeConfig.applicationName}</strong>
+                    <strong>${escapeHtml(runtimeConfig.applicationName)}</strong>
                 </div>
                 <div class="config-item">
                     <span>Configured profile</span>
-                    <strong>${runtimeConfig.configuredProfile}</strong>
+                    <strong>${escapeHtml(runtimeConfig.configuredProfile)}</strong>
                 </div>
                 <div class="config-item">
                     <span>Active Spring profiles</span>
-                    <strong>${runtimeConfig.activeProfiles.join(", ")}</strong>
+                    <strong>${escapeHtml(runtimeConfig.activeProfiles.join(", "))}</strong>
                 </div>
             </div>
             <h3>Feature flags</h3>
             <ul class="feature-flags">
                 ${runtimeConfig.features.map((feature) => `
                     <li>
-                        <span>${feature.name}</span>
+                        <span>${escapeHtml(feature.name)}</span>
                         <strong class="${feature.enabled ? "enabled" : "disabled"}">
                             ${feature.enabled ? "Enabled" : "Disabled"}
                         </strong>
@@ -160,18 +239,46 @@ function renderSettingsPage(page) {
 }
 
 async function refreshBackendStatus() {
+    backendHealth = {
+        status: "checking",
+        message: "Checking backend health...",
+        checkedAt: null
+    };
+    updateBackendHealthUi();
+
     try {
-        const response = await fetch("/actuator/health", {headers: {"Accept": "application/json"}});
+        const response = await fetch("/api/health", {headers: {"Accept": "application/json"}});
         if (!response.ok) {
             throw new Error(`Health endpoint returned ${response.status}`);
         }
 
         const health = await response.json();
-        environmentPill.textContent = `Backend ${health.status ?? "UP"}`;
-        environmentPill.classList.toggle("ok", health.status === "UP");
+        backendHealth = {
+            status: health.status ?? "UNKNOWN",
+            message: health.message ?? "Backend responded, but did not include a health message.",
+            checkedAt: health.checkedAt ?? new Date().toISOString()
+        };
+        clearGlobalError();
     } catch {
-        environmentPill.textContent = "Backend unavailable";
-        environmentPill.classList.remove("ok");
+        backendHealth = {
+            status: "UNAVAILABLE",
+            message: "The backend API is not reachable. Confirm the Spring Boot service is running, then refresh the health check.",
+            checkedAt: new Date().toISOString()
+        };
+        showGlobalError("Backend services are unavailable. Demo data may not load until the backend is running again.");
+    } finally {
+        updateBackendHealthUi();
+    }
+}
+
+function updateBackendHealthUi() {
+    const isUp = backendHealth.status === "UP";
+    environmentPill.textContent = backendHealth.status === "checking" ? "Backend checking" : `Backend ${backendHealth.status}`;
+    environmentPill.classList.toggle("ok", isUp);
+    environmentPill.classList.toggle("error", backendHealth.status !== "checking" && !isUp);
+
+    if ((window.location.hash.replace("#/", "") || "system-status") === "system-status") {
+        renderPage();
     }
 }
 
@@ -186,7 +293,7 @@ async function refreshRuntimeConfig() {
         runtimeConfigError = null;
     } catch {
         runtimeConfig = null;
-        runtimeConfigError = "Runtime configuration is unavailable.";
+        runtimeConfigError = "Runtime configuration is unavailable. Check backend health, then use Refresh to try again.";
     }
 
     if ((window.location.hash.replace("#/", "") || "system-status") === "settings") {
@@ -195,6 +302,22 @@ async function refreshRuntimeConfig() {
 }
 
 window.addEventListener("hashchange", renderPage);
+window.addEventListener("error", () => {
+    showGlobalError("Something went wrong in the demo UI. Refresh the page or retry the last action.");
+});
+window.addEventListener("unhandledrejection", () => {
+    showGlobalError("A backend request failed unexpectedly. Check service health and retry.");
+});
+healthRefreshButton.addEventListener("click", () => {
+    refreshBackendStatus();
+    refreshRuntimeConfig();
+});
+pageContent.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.matches("[data-health-refresh]")) {
+        refreshBackendStatus();
+        refreshRuntimeConfig();
+    }
+});
 renderPage();
 refreshBackendStatus();
 refreshRuntimeConfig();
