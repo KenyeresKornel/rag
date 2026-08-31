@@ -1,8 +1,33 @@
+server:
+  port: 8081
+
 spring:
   application:
     name: arxiv-rag
   profiles:
     default: local
+  datasource:
+    url: jdbc:postgresql://localhost:5432/arxiv_rag
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+  ai:
+    openai:
+      api-key: ${AZURE_OPENAI_API_KEY:${OPENAI_API_KEY:dummy-key}}
+      base-url: ${AZURE_OPENAI_ENDPOINT:${OPENAI_BASE_URL:https://api.openai.com/v1}}
+      embedding:
+        options:
+          model: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT:${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}}
+    vectorstore:
+      pgvector:
+        initialize-schema: false
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
 
 rag:
   runtime:
@@ -20,3 +45,13 @@ management:
     web:
       exposure:
         include: health,info
+
+arxiv:
+  import:
+    categories:
+      - cs.CL
+      - cs.AI
+      - cs.LG
+      - cs.CV
+    from-date: 2022-01-01
+    max-records: 50000

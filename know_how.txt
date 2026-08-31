@@ -1,0 +1,62 @@
+Yes, absolutely. In fact, a highly modular, step-by-step implementation and verification workflow is the recommended engineering standard for this project. Developing the system incrementally makes it easier to debug, ensures each boundary behaves as designed, and keeps the codebase extremely clean.
+
+Here is how you can separately implement and test every single step in `daily_progress.txt`:
+
+---
+
+### Step 1: Infrastructure Setup (`docker-compose.yml`)
+*   **Implementation:** Create the `docker-compose.yml` file with PostgreSQL and pgvector.
+*   **Testing:** 
+    *   Run `docker compose up -d` to spin up the database.
+    *   Verify the container is healthy and the port (`5432`) is open.
+    *   Check connectivity and vector extension availability using a simple command:
+        ```bash
+        docker compose exec db psql -U postgres -d arxiv_rag -c "CREATE EXTENSION IF NOT EXISTS vector;"
+        ```
+
+### Step 2: Maven Dependencies (`pom.xml`)
+*   **Implementation:** Add Spring Data JPA, PostgreSQL Driver, and Flyway dependencies.
+*   **Testing:**
+    *   Run `./mvnw clean compile` to ensure all new dependencies resolve successfully and that there are no library version conflicts.
+
+### Step 3: Database Migration (`src/main/resources/db/migration/`)
+*   **Implementation:** Create Flyway migration files (e.g., `V1__create_papers_table.sql`).
+*   **Testing:**
+    *   Ensure your database docker container is running.
+    *   Set up a local application profile (`application-local.yml`) with your JDBC credentials and run the Spring Boot application or execute `./mvnw flyway:migrate` if using the Flyway Maven plugin.
+    *   Verify the table was successfully created by querying PostgreSQL directly:
+        ```bash
+        docker compose exec db psql -U postgres -d arxiv_rag -c "\d papers"
+        ```
+
+### Step 4: Domain & Persistence (`com.example.arxivrag.paper`)
+*   **Implementation:** Define the `Paper` JPA entity and the `PaperRepository` interface.
+*   **Testing:**
+    *   Write a localized integration test (`@DataJpaTest`) with Spring Boot.
+    *   This test should save a single `Paper` record to the database, query it by `arxiv_id` or categories, and assert that fields (such as `abstractText`, `submittedDate`, and `categories`) are stored and retrieved perfectly without any Hibernate mapping exceptions.
+
+### Step 5: Ingestion & Import Pipeline (`com.example.arxivrag.arxiv`)
+Because we separate the streaming, filtering, mapping, and persisting stages into discrete classes, you can unit-test each component individually **without even having a database running**:
+*   **Testing `ArxivDatasetReader` (Streaming):**
+    *   Create a miniature test JSON file with 3 mock lines (including one malformed line).
+    *   Write a unit test to verify that the reader successfully streams and returns exactly the expected valid records, throwing or handling the malformed line according to your defined policy.
+*   **Testing `ArxivRecordFilter` (Filtering):**
+    *   Write unit tests with different input categories (e.g. `cs.CV`, `math.CO`) and submission dates.
+    *   Assert that the filter includes/excludes records exactly matching your configured rules (such as matching `cs.CL` and skipping unrelated fields).
+*   **Testing `PaperMapper` (Mapping):**
+    *   Unit test the mapping logic using mock datasets.
+    *   Verify whitespace-trimming, date format conversions, author arrays format mapping, and proper assignment of `NULL` for missing DOIs or journal references.
+*   **Testing Idempotency & Statistics (Bulk Upserting):**
+    *   Write a test that attempts to run the importer twice with identical records.
+    *   Assert that the repository performs an `upsert`/update instead of throwing duplicate key exceptions, and verify that the printed statistics correctly reflect 0 new insertions and N updates/skips.
+
+### Step 6: Importer CLI Trigger
+*   **Implementation:** Implement the `CommandLineRunner` hook to parse the arguments and trigger the `ArxivImportService`.
+*   **Testing:**
+    *   Run the command with a path to a tiny sample JSON file containing 10 papers.
+    *   Verify that the CLI catches the command argument, runs successfully, prints the formatted statistics block to standard output, and exits cleanly.
+
+### Step 7: Ingestion & Integration Tests
+*   **Implementation:** Wire all components together in an end-to-end flow.
+*   **Testing:**
+    *   Write an integration test (`@SpringBootTest`) that mounts a test database, runs the full CLI importer against a tiny mock dataset, and then queries the `PaperRepository` to verify that the exact papers match the filtered criteria and are stored completely.

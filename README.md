@@ -77,7 +77,7 @@ com.example.arxivrag
     └── pgvector
 ```
 
-Only package boundaries are created by this bootstrap ticket. Domain classes, repositories, importers, migrations, database infrastructure, and vector-store implementations are intentionally deferred to later tickets.
+The database infrastructure (PostgreSQL 18 + pgvector), database migrations (managed via Flyway), canonical paper domain entity, repository layers, and the streaming arXiv dataset ingestion pipeline are now fully implemented. Embedding and vector retrieval implementations are deferred to subsequent phases.
 
 ## UI shell
 
@@ -100,10 +100,8 @@ The app shell includes navigation and placeholder pages for:
 
 ## Next implementation tickets
 
-1. PostgreSQL/Flyway infrastructure and relational paper schema.
-2. Streaming arXiv dataset reader and importer.
-3. pgvector and embedding ingestion.
-4. Semantic retrieval and paper-ID resolution.
+1. pgvector and embedding ingestion.
+2. Semantic retrieval and paper-ID resolution.
 
 ## Continuous integration
 

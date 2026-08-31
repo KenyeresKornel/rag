@@ -1,0 +1,46 @@
+Based on the official project roadmap (`docs/implementation_steps.txt`) and the current "bootstrap/baseline" state of the codebase, the immediate next phase is **Step 1: Dataset Slice and Relational Postgres Model**.
+
+The goal of this phase is to establish a repeatable, high-performance, and idempotent ingestion process that populates a clean PostgreSQL database with your targeted subset of arXiv paper metadata. No embeddings or AI integrations are introduced yet.
+
+Here is the exact blueprint for what needs to be implemented next:
+
+---
+
+### 1. Infrastructure Setup (`docker-compose.yml`)
+You need a running instance of PostgreSQL (with `pgvector` support pre-configured to keep things aligned for Step 2).
+*   Create a `docker-compose.yml` in the project root.
+*   **Database Image:** Use `pgvector/pgvector:18-pgvector` (PostgreSQL 18 + pgvector 0.8.6, matching your `docs/decisions.md` specifications).
+
+### 2. Maven Dependencies (`pom.xml`)
+Add the core relational and migration dependencies to your Maven build configuration:
+*   `spring-boot-starter-data-jpa` (for entity and repository management)
+*   `postgresql` (JDBC driver)
+*   `flyway-core` & `flyway-database-postgresql` (for schema migrations)
+
+### 3. Database Migration (`src/main/resources/db/migration/`)
+Configure Flyway to manage the database schema. Set `spring.jpa.hibernate.ddl-auto=none` to ensure Flyway owns the schema completely.
+*   **`V1__create_papers_table.sql`**: Define the `papers` table structure, distinguishing the database primary key (`BIGINT` auto-increment) from the canonical `arxiv_id`.
+*   **Indexes**: Create database indexes on `arxiv_id` (unique), `submitted_date`, and `categories`.
+*   **Authors & Categories**: For the first iteration, use `TEXT[]` arrays or a JSONB column to keep the vector-store comparison focus lean, or establish relational tables (`paper_categories`, `paper_authors`) if querying individual authors/categories strictly via normalized SQL is preferred.
+
+### 4. Domain & Persistence (`com.example.arxivrag.paper`)
+*   Implement the `Paper` entity matching your database schema. Use a clear column name like `abstract_text` instead of `abstract` (which is a reserved keyword in Java).
+*   Create `PaperRepository` extending `JpaRepository` to handle bulk saving and relational queries.
+
+### 5. Ingestion & Import Pipeline (`com.example.arxivrag.arxiv`)
+Implement a highly efficient, streaming importer:
+*   **`ArxivDatasetReader`**: Stream and deserialize the arXiv JSON dataset line-by-line (rather than loading the massive 2.7M-record file into RAM) using Jackson's streaming parser.
+*   **`ArxivRecordFilter`**: Filter records dynamically based on the configuration-driven parameters in `application.yml` (e.g., categories like `cs.CL`, `cs.AI`, `cs.LG`, `cs.CV` and date constraints `submitted_date >= 2022-01-01`).
+*   **`PaperMapper`**: Standardize white-space, map dataset fields to your entity model, and handle missing values (DOIs/journal references as `NULL`).
+*   **Idempotency & Batching**: Ensure running the importer multiple times is safe and uses bulk operations (e.g., Spring Data JPA batching or standard `ON CONFLICT DO UPDATE` / `ON CONFLICT DO NOTHING`) to update or skip duplicates without inflating the DB size.
+*   **Statistics**: Print a detailed summary at the end of execution (total records read, category matched, imported, updated, skipped, and elapsed time).
+
+### 6. Importer CLI Trigger
+Configure a dedicated Spring Boot command or `CommandLineRunner` that acts as the entrypoint for importing:
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.arguments="import-arxiv /path/to/arxiv-metadata-oai-snapshot.json"
+```
+
+### 7. Ingestion & Integration Tests
+*   **Unit Tests**: Verify the parsing, mapping, and filtering logic of `ArxivRecordFilter` and `PaperMapper` in isolation.
+*   **Integration Tests**: Write an integration test (e.g., using a local test DB or `Testcontainers`) to verify that Flyway executes migrations successfully and `PaperRepository` stores and queries papers correctly.
