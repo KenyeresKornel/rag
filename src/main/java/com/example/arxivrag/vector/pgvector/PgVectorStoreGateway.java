@@ -40,7 +40,11 @@ public class PgVectorStoreGateway implements VectorStoreGateway {
             return;
         }
         List<Document> springAiDocs = documents.stream()
-            .map(doc -> new Document(doc.documentId(), doc.text(), doc.metadata()))
+            .map(doc -> {
+                // Generate a deterministic UUID from the documentId so Spring AI's PgVectorStore can parse it safely
+                String uuidStr = UUID.nameUUIDFromBytes(doc.documentId().getBytes(StandardCharsets.UTF_8)).toString();
+                return new Document(uuidStr, doc.text(), doc.metadata());
+            })
             .toList();
         vectorStore.add(springAiDocs);
     }

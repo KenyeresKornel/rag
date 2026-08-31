@@ -32,6 +32,8 @@ spring:
 rag:
   runtime:
     profile: local
+  embeddings:
+    mock: true
   features:
     import-enabled: false
     papers-enabled: false
