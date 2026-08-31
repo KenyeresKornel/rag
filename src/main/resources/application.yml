@@ -34,6 +34,8 @@ rag:
     profile: local
   embeddings:
     mock: true
+  chat:
+    mock: true
   features:
     import-enabled: false
     papers-enabled: false
