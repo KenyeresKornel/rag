@@ -6,7 +6,7 @@ CREATE TABLE papers (
     authors TEXT[] NOT NULL,
     categories VARCHAR(50)[] NOT NULL,
     submitted_date DATE NOT NULL,
-    doi VARCHAR(100),
+    doi VARCHAR(255),
     journal_ref TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL

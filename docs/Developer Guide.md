@@ -26,26 +26,27 @@ Implemented today:
 - Spring MVC/WebMVC support;
 - Spring Boot Actuator;
 - static frontend shell;
-- package boundaries for planned domain areas;
+- package boundaries;
 - basic integration tests;
 - GitHub Actions CI;
-- Dependabot configuration.
+- Dependabot configuration;
+- PostgreSQL 18 & pgvector 0.8.6 docker-compose runtime infrastructure;
+- Flyway relational and vector schemas (V1, V2, V3 migrations);
+- Ingestion loader for arXiv raw dataset (JSON streaming and idempotent bulk-upserts);
+- JPA entities and repositories (Paper, EmbeddingCheckpoint);
+- Spring AI 2.0.0 integration;
+- Unified OpenAI/Azure OpenAI embedding configuration;
+- Decoupled abstract VectorStoreGateway and concrete PgVectorStoreGateway;
+- Resumable batch-based EmbeddingIngestionService with content-hash change detection;
+- CLI command runners for import-arxiv, embed-papers, and search-vector.
 
 Planned but **not yet implemented on `main`**:
 
-- PostgreSQL connectivity;
-- relational paper schema;
-- Flyway migrations;
-- pgvector extension/schema;
-- Spring AI runtime integration;
-- Azure OpenAI/OpenAI embedding calls;
-- arXiv ingestion/import pipeline;
-- paper entities and repositories;
-- vector-store contracts and concrete search implementation;
-- RAG retrieval/generation API;
+- Grounded LLM Chat/generation service;
+- Web-facing chat interfaces;
 - Milvus and Chroma adapters;
-- Dockerfile / Docker Compose infrastructure;
-- benchmarking implementation.
+- Docker containerization for the Spring Boot application itself;
+- retrieval benchmarking implementation.
 
 This distinction is important when developing against the project: `docs/decisions.md` and `docs/project-brief.md` describe the intended architecture, while `pom.xml` and `src/` describe what is actually executable today.
 
@@ -59,10 +60,18 @@ This distinction is important when developing against the project: `docs/decisio
 |---|---|
 | Language | Java 21 |
 | Application framework | Spring Boot 4.1.0 |
+| AI framework | Spring AI 2.0.0 |
 | Web framework | Spring WebMVC |
 | Operational endpoints | Spring Boot Actuator |
+| Relational database | PostgreSQL 18 |
+| Vector database extension | pgvector 0.8.6 |
+| Database migration | Flyway |
+| Primary embedding provider | Azure OpenAI |
+| Embedding fallback | OpenAI API |
+| Embedding model | `text-embedding-3-small` (1536 dim, cosine similarity) |
+| JSON processing | Jackson 3.0 / repackaged ObjectMapper |
 | Build | Maven 3.9.x via Maven Wrapper |
-| Testing | JUnit 5 / Spring Boot Test / AssertJ |
+| Testing | JUnit 5 / Spring Boot Test / AssertJ / Mockito |
 | Frontend | Static HTML/CSS/JavaScript served by Spring Boot |
 | CI | GitHub Actions |
 | Dependency updates | Dependabot |
@@ -73,18 +82,10 @@ The project's recorded v1 decisions specify:
 
 | Area | Planned technology |
 |---|---|
-| AI framework | Spring AI 2.0.0 |
-| Primary embedding provider | Azure OpenAI |
-| Embedding fallback | OpenAI API |
-| Embedding model | `text-embedding-3-small` |
-| Embedding dimension | 1536 |
-| Vector similarity | Cosine distance |
-| Relational database | PostgreSQL 18 |
-| Initial vector extension | pgvector 0.8.6 |
-| Schema migration | Flyway |
 | Additional vector stores | Milvus and Chroma |
+| Containerized App | Spring Boot App Dockerfile |
 
-These planned components are not yet declared as runtime dependencies in the current `pom.xml`.
+These components are fully declared and managed as dependencies in `pom.xml`.
 
 ---
 
@@ -334,46 +335,35 @@ java -jar target/arxiv-rag-0.0.1-SNAPSHOT.jar
 
 ## 6. Configuration
 
-Current application configuration is intentionally minimal.
+`src/main/resources/application.yml` and profile-specific overrides configure:
 
-`src/main/resources/application.yml` configures:
+- Spring datasource URL, username, and password;
+- Flyway database migration enabled/disabled;
+- Hibernate ddl-auto properties set to `none`;
+- Spring AI unified OpenAI and Azure OpenAI endpoint configurations;
+- Spring AI pgvector properties (schema-initialization set to `false`, 1536 dimensions, and `COSINE_DISTANCE` similarity metrics);
+- arXiv import specific properties (categories, from-date, max-records);
+- Operational features activation flags under `rag.features` (import, papers, search, vector-stores, benchmarks, etc.);
+- Actuator endpoint web exposures.
 
-```yaml
-spring:
-  application:
-    name: arxiv-rag
+Standard Spring Boot external configuration mechanisms (such as environment variables or system properties) can dynamically override any of these keys.
 
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-```
+### Core Configured Properties
 
-### Current configurable behavior
+Key parameters in `application.yml` are wired to support seamless environment mappings:
 
-- Spring application name: `arxiv-rag`;
-- Actuator web exposure: `health` and `info`.
-
-Standard Spring Boot external configuration mechanisms can override values through command-line options, system properties, environment variables, or profile-specific files.
+- **`spring.ai.openai.api-key`**: Resolves `AZURE_OPENAI_API_KEY` first, falling back to `OPENAI_API_KEY`, defaulting to `dummy-key`.
+- **`spring.ai.openai.base-url`**: Resolves `AZURE_OPENAI_ENDPOINT` first, falling back to `OPENAI_BASE_URL` (defaulting to standard OpenAI `https://api.openai.com/v1`).
+- **`spring.ai.openai.embedding.options.model`**: Resolves `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` first, falling back to `OPENAI_EMBEDDING_MODEL` (defaulting to `text-embedding-3-small`).
+- **`spring.ai.vectorstore.pgvector.initialize-schema`**: Set to `false` to ensure Flyway schema migrations retain structural ownership.
 
 ### Not configured yet
 
-The current branch does not define project-specific settings for:
+The codebase does not yet define settings for:
 
-- datasource URL/username/password;
-- Flyway;
-- pgvector;
-- Azure OpenAI;
-- OpenAI;
-- embedding model/dimension;
-- vector-store selection;
-- arXiv dataset location;
-- dataset profile;
-- retrieval `topK`;
-- chat/generation model.
-
-When these are implemented, prefer configuration properties and environment-variable backed secrets rather than hard-coded credentials.
+- Grounded chat/generation model selection;
+- Custom prompt templates;
+- Milvus and Chroma selected adapters.
 
 ---
 
@@ -381,43 +371,40 @@ When these are implemented, prefer configuration properties and environment-vari
 
 ### 7.1 Current status
 
-There is **no database runtime integration on `main` yet**. The project has no datasource dependency/configuration, migrations, entities, or repositories in the current baseline.
+PostgreSQL database runtime integration is **fully implemented and functional**. The project utilizes a local or containerized PostgreSQL 18 instance with `pgvector` extensions enabled. Database schemas, indexes, and tables are fully managed via Flyway migrations.
 
-### 7.2 Planned database architecture
+### 7.2 Relational database architecture
 
-The v1 decisions specify:
+The active schemas specify:
 
 - PostgreSQL 18;
 - pgvector 0.8.6;
 - Flyway for all schema changes;
-- Hibernate automatic schema creation should be disabled;
-- Spring AI automatic pgvector schema initialization should not own the schema.
+- Hibernate automatic schema creation is disabled;
+- Spring AI automatic pgvector schema initialization is disabled (to protect migration integrity).
 
-The relational `papers` table is intended to be the canonical metadata source.
+The relational `papers` table is the canonical metadata source, mapping:
+- `id` (BIGSERIAL PK)
+- `arxiv_id` (VARCHAR UNIQUE)
+- `title` (TEXT)
+- `abstract_text` (TEXT)
+- `authors` (TEXT[] native array)
+- `categories` (VARCHAR[] native array with a GIN search index)
+- `submitted_date` (DATE)
+- `doi` (VARCHAR)
+- `journal_ref` (TEXT)
 
-Expected paper metadata from the project brief includes fields such as:
+The ingestion tracking is managed by:
+- `embedding_checkpoints`: Stores composite primary key `(paper_id, chunk_id, embedding_model)` with fields `content_hash` and `embedded_at`.
 
-- paper ID;
-- title;
-- abstract;
-- authors;
-- categories;
-- submitted date;
-- DOI;
-- journal reference.
+### 7.3 Vector representation
 
-The exact schema should be defined by Flyway migrations once the database ticket is implemented.
-
-### 7.3 Planned vector representation
-
-Current v1 decisions specify:
-
-- one paper = one retrieval document initially;
-- embedding input = title + abstract;
-- model = `text-embedding-3-small`;
-- dimension = 1536;
-- similarity = cosine distance;
-- vector metadata should include `paper_id`, `chunk_id`, `categories`, and `submitted_date`.
+- **`vector_store` table**: Expected Spring AI schema with columns:
+  - `id` (UUID Primary Key)
+  - `content` (TEXT)
+  - `metadata` (JSONB GIN indexed)
+  - `embedding` (VECTOR(1536) HNSW indexed using `vector_cosine_ops`)
+- Model: `text-embedding-3-small` (1536 dimensions, Cosine distance similarity metric).
 
 ### 7.4 Dataset scope
 
@@ -431,7 +418,7 @@ Recorded v1 dataset decisions:
   - `scale`: all matching papers;
 - default profile: `dev`.
 
-Dataset ingestion is explicitly not implemented in the current bootstrap application.
+Dataset ingestion is **fully implemented** and can be triggered via the `import-arxiv <file-path>` CLI execution argument.
 
 ---
 
@@ -439,9 +426,13 @@ Dataset ingestion is explicitly not implemented in the current bootstrap applica
 
 ### Current status
 
-The analyzed `main` branch does **not** contain a Dockerfile or Docker Compose definition. Therefore the current branch does not provide a repository-supported Docker build/run command.
+The repository contains a `docker-compose.yml` defining the containerized database environment. This spins up the high-performance `pgvector/pgvector:pg18` database container on port `5432` with pre-installed pgvector (0.8.6) capabilities.
 
-Do not document commands such as `docker build .` as working project commands until a Dockerfile is committed.
+To launch the database container:
+
+```bash
+docker compose up -d
+```
 
 ### Intended direction
 

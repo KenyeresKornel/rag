@@ -31,7 +31,7 @@ public class Paper {
     @Column(name = "submitted_date", nullable = false)
     private LocalDate submittedDate;
 
-    @Column(name = "doi", length = 100)
+    @Column(name = "doi", length = 255)
     private String doi;
 
     @Column(name = "journal_ref", columnDefinition = "TEXT")
