@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("test")
 @SpringBootTest
-class ChatControllerIntegrationTests {
+class AgentChatIntegrationTests {
 
     @Autowired
     private ChatController chatController;
@@ -43,58 +43,61 @@ class ChatControllerIntegrationTests {
     }
 
     @Test
-    void testChatControllerIntegrationWithMockModel() {
-        // Arrange: Seed canonical papers in PostgreSQL
+    void testAgentChatIntegrationWithMockFunctions() {
+        // Arrange: Seed test papers
         Paper paper1 = new Paper(
-            "doc-chat-1", "Self-Correction in Language Models", "Fidelity abstracts.",
+            "doc-agent-1", "Transfer Learning in Deep Models", "Agent details.",
             List.of("Vaswani"), List.of("cs.CL"), LocalDate.of(2024, 1, 1), null, null
         );
         Paper paper2 = new Paper(
-            "doc-chat-2", "Constitutional AI Techniques", "Grounded prompt checks.",
+            "doc-agent-2", "Semantic Alignment Mechanics", "Agent details.",
             List.of("Amodei"), List.of("cs.CL"), LocalDate.of(2024, 1, 1), null, null
         );
         paperRepository.saveAll(List.of(paper1, paper2));
 
-        // Seed precomputed vector dimensions so our similarity queries retrieve them deterministic
+        // Seed precomputed vector dimensions
         float[] v1 = new float[1536]; v1[0] = 1.0f;
         float[] v2 = new float[1536]; v2[1] = 1.0f;
         
         vectorStoreGateway.save(
             List.of(
                 new RetrievalDocument(
-                    "arxiv:doc-chat-1:chunk:0", "doc-chat-1", 
-                    "Self-Correction in Language Models\nFidelity abstracts.", 
-                    Map.of("paper_id", "doc-chat-1", "chunk_id", "0"), "h1"
+                    "arxiv:doc-agent-1:chunk:0", "doc-agent-1", 
+                    "Transfer Learning in Deep Models\nAgent details.", 
+                    Map.of("paper_id", "doc-agent-1", "chunk_id", "0"), "h1"
                 ),
                 new RetrievalDocument(
-                    "arxiv:doc-chat-2:chunk:0", "doc-chat-2", 
-                    "Constitutional AI Techniques\nGrounded prompt checks.", 
-                    Map.of("paper_id", "doc-chat-2", "chunk_id", "0"), "h2"
+                    "arxiv:doc-agent-2:chunk:0", "doc-agent-2", 
+                    "Semantic Alignment Mechanics\nAgent details.", 
+                    Map.of("paper_id", "doc-agent-2", "chunk_id", "0"), "h2"
                 )
             ),
             List.of(v1, v2)
         );
 
-        RagChatRequest request = new RagChatRequest("Explain self-correction and alignment", 2);
+        // Act: Execute POST /api/chat/agent with a category constraint to trigger hybrid search
+        RagChatRequest request = new RagChatRequest("Search papers about deep learning in category cs.CL", 2);
+        RagChatResponse response = chatController.agentChat(request);
 
-        // Act: Directly execute controller endpoint
-        RagChatResponse response = chatController.chat(request);
-
-        // Assert: Verify response values
+        // Assert: Verify generated thought-trace and citations
         assertThat(response).isNotNull();
-        assertThat(response.responseText()).contains("[1]");
-        assertThat(response.responseText()).contains("[2]");
+        assertThat(response.responseText()).contains("Agent Thought Trace");
+        assertThat(response.responseText()).contains("hybridSearch");
+        assertThat(response.responseText()).contains("category");
 
+        // Verify resolved citations
         assertThat(response.citations()).hasSize(2);
         
-        Citation cit1 = response.citations().get(0);
-        assertThat(cit1.arxivId()).isEqualTo("doc-chat-1");
-        assertThat(cit1.title()).isEqualTo("Self-Correction in Language Models");
-        assertThat(cit1.url()).isEqualTo("https://arxiv.org/abs/doc-chat-1");
+        Citation cit1 = response.citations().stream()
+            .filter(c -> "doc-agent-1".equals(c.arxivId()))
+            .findFirst()
+            .orElseThrow();
+        assertThat(cit1.title()).isEqualTo("Transfer Learning in Deep Models");
 
-        Citation cit2 = response.citations().get(1);
-        assertThat(cit2.arxivId()).isEqualTo("doc-chat-2");
-        assertThat(cit2.title()).isEqualTo("Constitutional AI Techniques");
-        assertThat(cit2.url()).isEqualTo("https://arxiv.org/abs/doc-chat-2");
+        Citation cit2 = response.citations().stream()
+            .filter(c -> "doc-agent-2".equals(c.arxivId()))
+            .findFirst()
+            .orElseThrow();
+        assertThat(cit2.title()).isEqualTo("Semantic Alignment Mechanics");
     }
 }

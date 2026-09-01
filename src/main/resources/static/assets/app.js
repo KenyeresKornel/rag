@@ -36,8 +36,8 @@ const pages = [
         id: "chat",
         title: "Chat",
         icon: "C",
-        summary: "Future grounded RAG chat interface with citations and retrieval transparency.",
-        details: ["Ask research questions", "Render cited source papers", "Show retrieval/debug context"]
+        summary: "Ask research questions and receive answers grounded with canonical academic citations.",
+        details: ["Ask questions in natural language", "Render inline citations automatically", "Explore resolved paper titles and authors in details drawers"]
     },
     {
         id: "vector-stores",
@@ -76,7 +76,11 @@ let backendHealth = {
     checkedAt: null
 };
 
+// Conversational RAG state
+let chatHistory = [];
+
 function escapeHtml(value) {
+    if (value == null) return "";
     return String(value)
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
@@ -124,6 +128,11 @@ function renderPage() {
 
     if (page.id === "system-status") {
         renderSystemStatusPage(page);
+        return;
+    }
+
+    if (page.id === "chat") {
+        renderChatPage(page);
         return;
     }
 
@@ -184,11 +193,11 @@ function renderSystemStatusPage(page) {
                         <span>Backend</span>
                     </div>
                     <div class="metric">
-                        <strong>Not wired</strong>
+                        <strong>${isUp ? "Wired" : "Not wired"}</strong>
                         <span>Relational DB</span>
                     </div>
                     <div class="metric">
-                        <strong>Not wired</strong>
+                        <strong>${isUp ? "Wired" : "Not wired"}</strong>
                         <span>Vector store</span>
                     </div>
                 </div>
@@ -236,6 +245,126 @@ function renderSettingsPage(page) {
             ${configMarkup}
         </div>
     `;
+}
+
+/**
+ * Renders the Interactive Conversational RAG Chat Page
+ */
+function renderChatPage(page) {
+    pageContent.innerHTML = `
+        <div class="chat-layout">
+            <div class="chat-messages" id="chat-messages-container">
+                <!-- Chat message bubbles will be dynamically injected here -->
+            </div>
+            <form class="chat-input-area" id="chat-form">
+                <input class="chat-input" id="chat-input" type="text" placeholder="Ask a question grounded by your academic database..." autocomplete="off" required>
+                <button class="primary-button" style="margin:0;" type="submit" id="chat-send-btn">Send</button>
+            </form>
+        </div>
+    `;
+
+    const messagesContainer = document.querySelector("#chat-messages-container");
+    const chatForm = document.querySelector("#chat-form");
+    const chatInput = document.querySelector("#chat-input");
+
+    // 1. Initial render of existing history
+    renderChatHistory(messagesContainer);
+
+    // 2. Form submission handler
+    chatForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const queryText = chatInput.value.trim();
+        if (!queryText) return;
+
+        // Append user query bubble
+        chatHistory.push({ sender: "user", text: queryText });
+        
+        // Append a typing placeholder bubble
+        chatHistory.push({ sender: "bot", text: "Thinking...", isTyping: true });
+        
+        chatInput.value = "";
+        renderChatHistory(messagesContainer);
+
+        try {
+            const response = await fetch("/api/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                body: JSON.stringify({ message: queryText, topK: 5 })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Chat endpoint returned ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            // Replace the typing placeholder with the real grounded answer
+            chatHistory[chatHistory.length - 1] = {
+                sender: "bot",
+                text: data.responseText,
+                citations: data.citations || []
+            };
+        } catch {
+            chatHistory[chatHistory.length - 1] = {
+                sender: "bot",
+                text: "An error occurred while connecting to the backend. Please verify your PostgreSQL connection is active and try again."
+            };
+        } finally {
+            renderChatHistory(messagesContainer);
+        }
+    });
+}
+
+function renderChatHistory(container) {
+    if (chatHistory.length === 0) {
+        container.innerHTML = `
+            <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100%; color:var(--muted); text-align:center; padding: 2rem;">
+                <span style="font-size:2.8rem; margin-bottom:0.75rem;">💬</span>
+                <h3>Conversational arXiv RAG</h3>
+                <p style="max-width: 25rem; font-size:0.92rem; line-height:1.55;">Ask questions about your imported academic papers. The assistant will answer using vector-grounded context and attach citations.</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = chatHistory
+        .map((msg) => {
+            const isUser = msg.sender === "user";
+            
+            // Build citation cards accordion if citations are present
+            let citationsAccordion = "";
+            if (msg.citations && msg.citations.length > 0) {
+                citationsAccordion = `
+                    <details class="citations-accordion">
+                        <summary>Grounded Context (${msg.citations.length} Cited Sources)</summary>
+                        <div class="citations-list">
+                            ${msg.citations.map((cit, idx) => `
+                                <div class="citation-card">
+                                    <a href="${escapeHtml(cit.url)}" target="_blank" rel="noopener noreferrer">[${idx + 1}] ${escapeHtml(cit.title)}</a>
+                                    <span class="citation-meta">Authors: ${escapeHtml(cit.authors.join(", "))} | ID: ${escapeHtml(cit.arxivId)}</span>
+                                </div>
+                            `).join("")}
+                        </div>
+                    </details>
+                `;
+            }
+
+            const bubbleClass = msg.isTyping ? "chat-bubble typing" : "chat-bubble";
+
+            return `
+                <div class="chat-bubble-wrapper ${msg.sender}">
+                    <div class="${bubbleClass}">${escapeHtml(msg.text)}</div>
+                    ${citationsAccordion}
+                </div>
+            `;
+        })
+        .join("");
+
+    // Auto-scroll message container to the absolute bottom
+    container.scrollTop = container.scrollHeight;
 }
 
 async function refreshBackendStatus() {

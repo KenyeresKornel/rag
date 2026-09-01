@@ -7,6 +7,8 @@ import com.example.arxivrag.vector.VectorSearchResult;
 import com.example.arxivrag.vector.VectorStoreGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
@@ -24,7 +26,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Service orchestrating the complete RAG loop: retrieve -> prompt ground -> generate -> cite.
+ * Service orchestrating both standard RAG retrieval and autonomous agentic tool-routing pipelines.
  */
 @Service
 public class RagChatService {
@@ -42,6 +44,14 @@ public class RagChatService {
         "User Question: {question}\n\n" +
         "Answer:";
 
+    private static final String AGENT_SYSTEM_PROMPT = 
+        "You are an autonomous scientific agent helping researchers explore arXiv papers.\n\n" +
+        "You have access to highly powerful database search tools: 'semanticSearch' and 'hybridSearch'.\n\n" +
+        "Constraints:\n" +
+        "1. Base your final answer ONLY on the paper contexts returned by the tools. If a tool reports no papers were found, state that clearly.\n" +
+        "2. You MUST cite your sources in-line using numeric brackets corresponding to the Document index returned by the tool (e.g., [1], [2]).\n" +
+        "3. Be proactive: if the user specifies a particular category (like cs.CV, cs.AI, cs.CL, cs.LG) or a year, use 'hybridSearch' to query with structured constraints. If they ask general concepts, use 'semanticSearch'.";
+
     private final VectorStoreGateway vectorStoreGateway;
     private final PaperRepository paperRepository;
     private final ChatModel chatModel;
@@ -57,13 +67,13 @@ public class RagChatService {
     }
 
     /**
-     * Executes a complete conversational RAG query.
+     * Executes a complete standard conversational RAG query.
      */
     public RagChatResponse chat(RagChatRequest request) {
         String query = request.message();
         int topK = request.topK();
         
-        log.info("Processing conversational RAG query: '{}' with topK: {}", query, topK);
+        log.info("Processing standard RAG query: '{}' with topK: {}", query, topK);
 
         // 1. Retrieve semantically relevant documents from pgvector
         List<VectorSearchResult> searchResults = vectorStoreGateway.search(new VectorSearchRequest(query, topK));
@@ -144,7 +154,72 @@ public class RagChatService {
             }
         }
 
-        log.info("Grounded response generated with {} active citations.", citations.size());
+        log.info("Standard response generated with {} active citations.", citations.size());
+        return new RagChatResponse(rawResponseText, citations);
+    }
+
+    /**
+     * Executes an autonomous, agent-based query with tool-calling capabilities.
+     */
+    public RagChatResponse agentChat(RagChatRequest request) {
+        String query = request.message();
+        int topK = request.topK();
+        log.info("Processing Agentic RAG query: '{}' with topK: {}", query, topK);
+
+        SystemMessage systemMessage = new SystemMessage(AGENT_SYSTEM_PROMPT);
+        UserMessage userMessage = new UserMessage(query);
+
+        // Prompt invokes the ChatModel. Function options are bound globally via application.yml config
+        Prompt prompt = new Prompt(List.of(systemMessage, userMessage));
+
+        log.info("Invoking ChatModel with autonomous search functions enabled...");
+        org.springframework.ai.chat.model.ChatResponse modelResponse = chatModel.call(prompt);
+        String rawResponseText = modelResponse.getResult().getOutput().getText();
+
+        // Parse Citations. Since the agent executes the search internally, we retrieve candidates
+        // matches from pgvector based on the original query, and verify if they are cited/mentioned in the LLM text.
+        List<VectorSearchResult> candidates = vectorStoreGateway.search(new VectorSearchRequest(query, topK + 2)); // scan slightly wider
+        List<Citation> citations = new ArrayList<>();
+
+        if (!candidates.isEmpty()) {
+            List<String> paperIds = candidates.stream().map(VectorSearchResult::paperId).toList();
+            List<Paper> dbPapers = paperRepository.findAllByArxivIdIn(paperIds);
+
+            for (Paper paper : dbPapers) {
+                // If the LLM mentions the paper's unique arXiv ID or standard title keywords in its answer
+                if (rawResponseText.contains(paper.getArxivId()) || 
+                    (paper.getTitle().length() > 15 && rawResponseText.contains(paper.getTitle().substring(0, 15)))) {
+                    citations.add(new Citation(paper.getArxivId(), paper.getTitle(), paper.getAuthors()));
+                }
+            }
+        }
+
+        // Fallback: If no papers matched candidate strings but text still has generic [1] brackets
+        if (citations.isEmpty()) {
+            Pattern pattern = Pattern.compile("\\[(\\d+)\\]");
+            Matcher matcher = pattern.matcher(rawResponseText);
+            Set<Integer> citedIndexes = new HashSet<>();
+            while (matcher.find()) {
+                try {
+                    citedIndexes.add(Integer.parseInt(matcher.group(1)));
+                } catch (NumberFormatException e) {
+                    // ignore
+                }
+            }
+            if (!citedIndexes.isEmpty() && !candidates.isEmpty()) {
+                List<String> paperIds = candidates.stream().map(VectorSearchResult::paperId).toList();
+                List<Paper> dbPapers = paperRepository.findAllByArxivIdIn(paperIds);
+                for (int idx : citedIndexes) {
+                    int listIndex = idx - 1;
+                    if (listIndex >= 0 && listIndex < dbPapers.size()) {
+                        Paper paper = dbPapers.get(listIndex);
+                        citations.add(new Citation(paper.getArxivId(), paper.getTitle(), paper.getAuthors()));
+                    }
+                }
+            }
+        }
+
+        log.info("Agentic response generated with {} active citations.", citations.size());
         return new RagChatResponse(rawResponseText, citations);
     }
 }

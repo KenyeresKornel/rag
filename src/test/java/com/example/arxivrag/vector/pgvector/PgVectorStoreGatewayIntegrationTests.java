@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
@@ -23,10 +24,13 @@ class PgVectorStoreGatewayIntegrationTests {
     @Autowired
     private PgVectorStoreGateway pgVectorStoreGateway;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @BeforeEach
     @AfterEach
     void cleanUp() {
-        pgVectorStoreGateway.deleteByPaperIds(List.of("doc-a", "doc-b", "doc-c"));
+        jdbcTemplate.update("DELETE FROM vector_store");
     }
 
     private float[] createVector(float v0, float v1) {
@@ -61,6 +65,13 @@ class PgVectorStoreGatewayIntegrationTests {
         float[] vecC = createVector(0.0f, 1.0f);
 
         pgVectorStoreGateway.save(List.of(docA, docB, docC), List.of(vecA, vecB, vecC));
+
+        // Diagnostics
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id, content FROM vector_store");
+        System.out.println(">>> DIAGNOSTICS: VECTOR_STORE SIZE = " + rows.size());
+        for (Map<String, Object> r : rows) {
+            System.out.println(">>> ROW ID: " + r.get("id") + " | CONTENT: " + r.get("content"));
+        }
 
         // Act: Perform search using query embedding parallel to A: [1.0, 0.0]
         float[] queryEmbedding = createVector(1.0f, 0.0f);

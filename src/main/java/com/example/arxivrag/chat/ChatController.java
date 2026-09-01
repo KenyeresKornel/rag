@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST Controller exposing the conversational RAG chat loop.
+ * REST Controller exposing standard and autonomous agent-based conversational RAG loops.
  */
 @RestController
 @RequestMapping("/api/chat")
@@ -21,10 +21,18 @@ public class ChatController {
     }
 
     /**
-     * Handles incoming grounded chat messages, retrieving context and generating conversational, cited responses.
+     * Handles standard conversational RAG questions, retrieving context and generating grounded responses.
      */
     @PostMapping
     public RagChatResponse chat(@RequestBody RagChatRequest request) {
         return ragChatService.chat(request);
+    }
+
+    /**
+     * Handles agent-based conversational questions with autonomous tool-calling capabilities.
+     */
+    @PostMapping("/agent")
+    public RagChatResponse agentChat(@RequestBody RagChatRequest request) {
+        return ragChatService.agentChat(request);
     }
 }

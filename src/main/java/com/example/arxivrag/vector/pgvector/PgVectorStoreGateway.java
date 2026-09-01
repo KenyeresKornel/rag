@@ -124,10 +124,16 @@ public class PgVectorStoreGateway implements VectorStoreGateway {
             }, vectorStr, vectorStr, request.topK());
         } else {
             // Standard semantic search using Spring AI VectorStore
-            SearchRequest springAiRequest = SearchRequest.builder()
+            SearchRequest.Builder builder = SearchRequest.builder()
                 .query(request.query())
                 .topK(request.topK())
-                .build();
+                .similarityThreshold(0.0); // Ensure low-scoring conceptual matches are not silently filtered out
+
+            if (request.filterExpression() != null) {
+                builder.filterExpression(request.filterExpression());
+            }
+
+            SearchRequest springAiRequest = builder.build();
 
             List<Document> docs = vectorStore.similaritySearch(springAiRequest);
             return docs.stream()

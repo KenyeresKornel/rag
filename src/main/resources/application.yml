@@ -23,6 +23,11 @@ spring:
       embedding:
         options:
           model: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT:${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}}
+      chat:
+        options:
+          functions:
+            - semanticSearch
+            - hybridSearch
     vectorstore:
       pgvector:
         initialize-schema: false
