@@ -31,6 +31,12 @@ public class SimpleChatModel implements ChatModel {
         prompt.getInstructions().forEach(msg -> promptBuilder.append(msg.getText()).append("\n"));
         String promptText = promptBuilder.toString();
 
+        // Identify the actual user query (the last message in the list) for precise keyword scanning
+        String userQuery = "";
+        if (!prompt.getInstructions().isEmpty()) {
+            userQuery = prompt.getInstructions().get(prompt.getInstructions().size() - 1).getText();
+        }
+
         // 1. Detect if the prompt expects Agentic mode (by checking for standard tool names in the system prompt)
         boolean agentMode = promptText.contains("semanticSearch") || promptText.contains("hybridSearch");
 
@@ -50,9 +56,9 @@ public class SimpleChatModel implements ChatModel {
         if (agentMode) {
             responseText.append("🔧 **[Agent Thought Trace]**\n");
             
-            // Check if the user query contains a category or a year to simulate hybrid vs semantic routing
-            boolean hasCategoryFilter = promptText.contains("category") || promptText.contains("cs.") || promptText.contains("domain");
-            boolean hasYearFilter = promptText.contains("year") || promptText.contains("published") || promptText.contains("recent");
+            // Check if the actual user query contains a category or a year to simulate hybrid vs semantic routing
+            boolean hasCategoryFilter = userQuery.contains("category") || userQuery.contains("cs.") || userQuery.contains("domain");
+            boolean hasYearFilter = userQuery.contains("year") || userQuery.contains("published") || userQuery.contains("recent");
 
             if (hasCategoryFilter || hasYearFilter) {
                 responseText.append("- User specified domain/date constraints. Decided to call tool **`hybridSearch`** with criteria:\n");

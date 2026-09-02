@@ -17,5 +17,29 @@ services:
       timeout: 5s
       retries: 5
 
+  chroma:
+    image: chromadb/chroma:0.5.5
+    container_name: arxiv-rag-chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/data
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.4.9
+    container_name: arxiv-rag-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      COMMON_STORAGETYPE: "local"
+    ports:
+      - "19530:19530"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  chroma_data:
+  milvus_data:

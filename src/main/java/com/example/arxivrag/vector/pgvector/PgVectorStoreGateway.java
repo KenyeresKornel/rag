@@ -8,6 +8,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
@@ -21,6 +22,7 @@ import java.util.UUID;
  * Implementation of {@link VectorStoreGateway} for PostgreSQL pgvector using Spring AI's {@link VectorStore}.
  */
 @Component
+@Profile("store-pgvector")
 public class PgVectorStoreGateway implements VectorStoreGateway {
 
     private final VectorStore vectorStore;

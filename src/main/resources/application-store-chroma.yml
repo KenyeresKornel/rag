@@ -1,0 +1,13 @@
+# Profile-specific overrides for the Chroma DB Store
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+      - org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreAutoConfiguration
+  ai:
+    vectorstore:
+      chroma:
+        client:
+          enabled: true
+          host: http://localhost:8000
+        collection-name: arxiv_collection

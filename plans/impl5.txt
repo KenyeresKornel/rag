@@ -1,0 +1,190 @@
+# Step 5 Implementation Plan: Milvus & Chroma Adapters (Vector Store Bake-Off)
+
+## Background & Motivation
+The project currently has a fully functional RAG and Agent pipeline decoupled by our agnostic `VectorStoreGateway` boundary, but it is bound exclusively to `pgvector` inside PostgreSQL. Roadmap Step 5 implements the planned "Vector Store Bake-off". By introducing concrete adapters for **Milvus Standalone** and **Chroma DB**, we enable developers to compare retrieval speeds, memory footprints, and scoring accuracies across different indexing backends, toggled seamlessly via simple Spring profile swaps.
+
+## Scope & Impact
+- **Modules Affected**: New package subfolders `com.example.arxivrag.vector.milvus` and `com.example.arxivrag.vector.chroma`, modifications to `pom.xml`, `application.yml`, and `docker-compose.yml`.
+- **Infrastructure**: Spin up additional containers for Chroma and Milvus.
+
+## Proposed Architecture
+- **Dynamic Routing**: We will use Spring Profiles to dynamically register and load the appropriate `VectorStoreGateway` implementation:
+  - Profile `store-pgvector` (Default): Registers `PgVectorStoreGateway`.
+  - Profile `store-milvus`: Registers `MilvusVectorStoreGateway`.
+  - Profile `store-chroma`: Registers `ChromaVectorStoreGateway`.
+- **Startup Crash Prevention**: Since we will declare all three starters in `pom.xml`, Spring Boot’s auto-configuration will attempt to instantiate all three client connections on startup (crashing if Milvus or Chroma are not running). We will programmatically or declaratively set `enabled: false` properties for unused stores by default in `application.yml`, and only enable them inside their active profile configurations.
+
+---
+
+## 1. Infrastructure Setup (`docker-compose.yml`)
+Add Milvus and Chroma containers to the existing Compose topology:
+
+### A. Chroma Container
+```yaml
+  chroma:
+    image: chromadb/chroma:0.5.5
+    container_name: arxiv-rag-chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/data
+    restart: unless-stopped
+```
+
+### B. Milvus Standalone (Compact Single-Node)
+We will spin up Milvus standalone which uses embedded etcd and Local I/O to keep memory footprint light:
+```yaml
+  milvus:
+    image: milvusdb/milvus:v2.4.9
+    container_name: arxiv-rag-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      COMMON_STORAGETYPE: "local"
+    ports:
+      - "19530:19530"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    restart: unless-stopped
+```
+
+---
+
+## 2. Dependency Management (`pom.xml`)
+Add the two official Spring AI vector store starters:
+```xml
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-milvus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-chroma</artifactId>
+        </dependency>
+```
+
+---
+
+## 3. Configuration Management (`application.yml`)
+Define the default disabled states and profile-based overrides:
+
+```yaml
+spring:
+  profiles:
+    active: pgvector # Defaults to pgvector on startup
+    group:
+      "pgvector": "store-pgvector"
+      "milvus": "store-milvus"
+      "chroma": "store-chroma"
+
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: false
+      milvus:
+        initialize-schema: false
+        client:
+          enabled: false # Disabled by default to prevent boot crashes
+      chroma:
+        initialize-schema: false
+        client:
+          enabled: false # Disabled by default to prevent boot crashes
+```
+
+Create profile overrides:
+* **`application-store-milvus.yml`**:
+  ```yaml
+  spring:
+    ai:
+      vectorstore:
+        milvus:
+          client:
+            enabled: true
+            host: localhost
+            port: 19530
+          collection-name: arxiv_collection
+  ```
+* **`application-store-chroma.yml`**:
+  ```yaml
+  spring:
+    ai:
+      vectorstore:
+        chroma:
+          client:
+            enabled: true
+            host: http://localhost:8000
+          collection-name: arxiv_collection
+  ```
+
+---
+
+## 4. Adapters Implementation
+
+### A. Milvus Adapter (`com.example.arxivrag.vector.milvus.MilvusVectorStoreGateway`)
+```java
+@Component
+@Profile("store-milvus")
+public class MilvusVectorStoreGateway implements VectorStoreGateway {
+    private final MilvusVectorStore vectorStore;
+    
+    @Autowired
+    public MilvusVectorStoreGateway(MilvusVectorStore vectorStore) {
+        this.vectorStore = vectorStore;
+    }
+    // Implement save, search, and delete using vectorStore.add() and similaritySearch()
+}
+```
+
+### B. Chroma Adapter (`com.example.arxivrag.vector.chroma.ChromaVectorStoreGateway`)
+```java
+@Component
+@Profile("store-chroma")
+public class ChromaVectorStoreGateway implements VectorStoreGateway {
+    private final ChromaVectorStore vectorStore;
+    
+    @Autowired
+    public ChromaVectorStoreGateway(ChromaVectorStore vectorStore) {
+        this.vectorStore = vectorStore;
+    }
+    // Implement save, search, and delete using vectorStore.add() and similaritySearch()
+}
+```
+
+---
+
+## 5. Test Cases for Validation
+
+We will configure isolated integration test cases for each individual database backend, ensuring compilation, data mappings, scores, and deletions behave identically.
+
+### Test Case 1: Milvus Vector Core Integration
+* **Type**: Integration Test (`MilvusVectorStoreGatewayIntegrationTests`)
+* **Profile Active**: `test,store-milvus`
+* **Scenarios**:
+  * **TC 1.1: Truncation Isolation**: Clean the collection before and after execution.
+  * **TC 1.2: Bulk Saving & Hashing**: Save 3 papers with deterministic dimensions parallel, moderate, and orthogonal to the query.
+  * **TC 1.3: Cosine Similarity Matching**: Perform search, assert Doc A returns first with score `1.0`, followed by Doc B, and Doc C is excluded.
+  * **TC 1.4: Cascade Paper Deletion**: Delete paper by ID, query, and assert it is removed.
+
+### Test Case 2: Chroma Vector Core Integration
+* **Type**: Integration Test (`ChromaVectorStoreGatewayIntegrationTests`)
+* **Profile Active**: `test,store-chroma`
+* **Scenarios**:
+  * **TC 2.1: Truncation Isolation**: Clean the collection.
+  * **TC 2.2: Bulk Saving & Hashing**: Save 3 papers.
+  * **TC 2.3: Cosine Similarity Matching**: Perform search, assert exact scores and order.
+  * **TC 2.4: Cascade Paper Deletion**: Delete by ID, assert removal.
+
+### Test Case 3: End-to-End Chat Loop Integration (Bake-Off Swap Verification)
+* **Type**: Integration Test (`ChatControllerIntegrationTests`)
+* **Active Profiles**: We will run this test three times (individually parameterizing `-Dspring.profiles.active=test,store-pgvector`, `-Dspring.profiles.active=test,store-milvus`, and `-Dspring.profiles.active=test,store-chroma`).
+* **Scenarios**:
+  * **TC 3.1: Grounded Response Integrity**: Post to `/api/chat`, assert that regardless of the backend selected:
+    - Text contains bracket citations `[1]`, `[2]`.
+    - Citations size is exactly 2.
+    - Metadatas (Title, Author, arXiv ID) are mapped accurately back from PostgreSQL.
+
+### Test Case 4: CLI Command runners execution
+* **Type**: Manual CLI / Smoke Verification
+* **Scenarios**:
+  * **TC 4.1**: Run `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=embed-papers" "-Dspring.profiles.active=local,store-milvus"` -> Ingests successfully into Milvus standalone.
+  * **TC 4.2**: Run `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=search-vector 'networks'" "-Dspring.profiles.active=local,store-chroma"` -> Queries Chroma standalone and prints aligned terminal table.

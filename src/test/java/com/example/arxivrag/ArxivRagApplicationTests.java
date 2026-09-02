@@ -40,7 +40,8 @@ class ArxivRagApplicationTests {
 
         assertThat(response.statusCode()).isBetween(200, 299);
         assertThat(response.body()).contains("\"configuredProfile\":\"test\"");
-        assertThat(response.body()).contains("\"activeProfiles\":[\"test\"]");
+        assertThat(response.body()).contains("\"activeProfiles\":[");
+        assertThat(response.body()).contains("\"test\"");
         assertThat(response.body()).contains("\"features\"");
         assertThat(response.body()).doesNotContain("super-secret-token");
         assertThat(response.body()).doesNotContain("api-key");

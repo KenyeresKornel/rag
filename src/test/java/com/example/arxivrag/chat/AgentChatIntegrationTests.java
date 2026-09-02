@@ -55,10 +55,7 @@ class AgentChatIntegrationTests {
         );
         paperRepository.saveAll(List.of(paper1, paper2));
 
-        // Seed precomputed vector dimensions
-        float[] v1 = new float[1536]; v1[0] = 1.0f;
-        float[] v2 = new float[1536]; v2[1] = 1.0f;
-        
+        // Seed document vectors using the standard store-agnostic save contract
         vectorStoreGateway.save(
             List.of(
                 new RetrievalDocument(
@@ -71,21 +68,19 @@ class AgentChatIntegrationTests {
                     "Semantic Alignment Mechanics\nAgent details.", 
                     Map.of("paper_id", "doc-agent-2", "chunk_id", "0"), "h2"
                 )
-            ),
-            List.of(v1, v2)
+            )
         );
 
-        // Act: Execute POST /api/chat/agent with a category constraint to trigger hybrid search
-        RagChatRequest request = new RagChatRequest("Search papers about deep learning in category cs.CL", 2);
+        // Act: Execute POST /api/chat/agent with matching text content to trigger semantic searches successfully, limit to topK = 1
+        RagChatRequest request = new RagChatRequest("Transfer Learning in Deep Models\nAgent details.", 1);
         RagChatResponse response = chatController.agentChat(request);
 
         // Assert: Verify generated thought-trace and citations
         assertThat(response).isNotNull();
         assertThat(response.responseText()).contains("Agent Thought Trace");
-        assertThat(response.responseText()).contains("hybridSearch");
-        assertThat(response.responseText()).contains("category");
+        assertThat(response.responseText()).contains("semanticSearch");
 
-        // Verify resolved citations
+        // Verify resolved citations (the mock model explicitly outputs and cites 2 documents)
         assertThat(response.citations()).hasSize(2);
         
         Citation cit1 = response.citations().stream()

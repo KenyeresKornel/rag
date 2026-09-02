@@ -5,7 +5,16 @@ spring:
   application:
     name: arxiv-rag
   profiles:
-    default: local
+    active: store-pgvector
+    group:
+      "test": "store-pgvector"
+      "pgvector": "store-pgvector"
+      "milvus": "store-milvus"
+      "chroma": "store-chroma"
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreAutoConfiguration
+      - org.springframework.ai.vectorstore.chroma.autoconfigure.ChromaVectorStoreAutoConfiguration
   datasource:
     url: jdbc:postgresql://localhost:5432/arxiv_rag
     username: postgres
@@ -33,6 +42,14 @@ spring:
         initialize-schema: false
         dimensions: 1536
         distance-type: COSINE_DISTANCE
+      milvus:
+        initialize-schema: false
+        client:
+          enabled: false
+      chroma:
+        initialize-schema: false
+        client:
+          enabled: false
 
 rag:
   runtime:

@@ -1,0 +1,6 @@
+# Profile-specific overrides for the PostgreSQL pgvector Store
+spring:
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: false

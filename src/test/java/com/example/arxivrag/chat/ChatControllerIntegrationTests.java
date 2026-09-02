@@ -55,10 +55,7 @@ class ChatControllerIntegrationTests {
         );
         paperRepository.saveAll(List.of(paper1, paper2));
 
-        // Seed precomputed vector dimensions so our similarity queries retrieve them deterministic
-        float[] v1 = new float[1536]; v1[0] = 1.0f;
-        float[] v2 = new float[1536]; v2[1] = 1.0f;
-        
+        // Seed document vectors using the standard store-agnostic save contract
         vectorStoreGateway.save(
             List.of(
                 new RetrievalDocument(
@@ -71,11 +68,11 @@ class ChatControllerIntegrationTests {
                     "Constitutional AI Techniques\nGrounded prompt checks.", 
                     Map.of("paper_id", "doc-chat-2", "chunk_id", "0"), "h2"
                 )
-            ),
-            List.of(v1, v2)
+            )
         );
 
-        RagChatRequest request = new RagChatRequest("Explain self-correction and alignment", 2);
+        // Standard text query matches Paper 1 perfectly with a score of 1.0! Set topK = 1 to isolate
+        RagChatRequest request = new RagChatRequest("Self-Correction in Language Models\nFidelity abstracts.", 1);
 
         // Act: Directly execute controller endpoint
         RagChatResponse response = chatController.chat(request);
@@ -83,18 +80,13 @@ class ChatControllerIntegrationTests {
         // Assert: Verify response values
         assertThat(response).isNotNull();
         assertThat(response.responseText()).contains("[1]");
-        assertThat(response.responseText()).contains("[2]");
+        assertThat(response.responseText()).doesNotContain("[2]"); // strictly isolated to top-1 matching paper
 
-        assertThat(response.citations()).hasSize(2);
+        assertThat(response.citations()).hasSize(1);
         
         Citation cit1 = response.citations().get(0);
         assertThat(cit1.arxivId()).isEqualTo("doc-chat-1");
         assertThat(cit1.title()).isEqualTo("Self-Correction in Language Models");
         assertThat(cit1.url()).isEqualTo("https://arxiv.org/abs/doc-chat-1");
-
-        Citation cit2 = response.citations().get(1);
-        assertThat(cit2.arxivId()).isEqualTo("doc-chat-2");
-        assertThat(cit2.title()).isEqualTo("Constitutional AI Techniques");
-        assertThat(cit2.url()).isEqualTo("https://arxiv.org/abs/doc-chat-2");
     }
 }

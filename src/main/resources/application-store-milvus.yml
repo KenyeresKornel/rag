@@ -1,0 +1,14 @@
+# Profile-specific overrides for the Milvus Standalone Store
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+      - org.springframework.ai.vectorstore.chroma.autoconfigure.ChromaVectorStoreAutoConfiguration
+  ai:
+    vectorstore:
+      milvus:
+        client:
+          enabled: true
+          host: localhost
+          port: 19530
+        collection-name: arxiv_collection
