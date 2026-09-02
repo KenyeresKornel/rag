@@ -1,0 +1,91 @@
+# Step 6 Implementation Plan: Query Latency & Benchmarking Harness
+
+## Background & Motivation
+In Step 5, we successfully implemented a multi-store vector backend supporting `pgvector`, `Milvus Standalone`, and `Chroma DB`. However, to objectively evaluate and compare these databases (the "Bake-Off"), the project requires a robust, programmatic **Benchmarking Harness** (Step 6). This harness will measure query latency averages, percentile distributions ($p_{50}$ median, $p_{95}$ tail latency), throughput (Queries Per Second / QPS), and ingestion speeds, outputting a beautiful console report that developers can run dynamically against whichever database is active.
+
+## Scope & Impact
+- **Modules Affected**: New package `com.example.arxivrag.benchmark`, new configuration overrides, and terminal integrations.
+- **Agnostic Scope**: The harness will query the generic `VectorStoreGateway` interface. This means the exact same benchmarking script will run unmodified across pgvector, Milvus, and Chroma, ensuring a perfectly unbiased "bake-off".
+
+## Proposed Architecture
+- **Metrics Evaluated**:
+  * **Total Queries**: The count of executions (default 100).
+  * **Throughput (QPS)**: Average queries completed per second.
+  * **Minimum & Maximum Latency**: Fastest and slowest queries.
+  * **Average Latency**: Mean duration in milliseconds.
+  * **$p_{50}$ Median Latency**: The 50th percentile (representing the typical user query duration).
+  * **$p_{95}$ Tail Latency**: The 95th percentile (representing the slow query ceiling under load).
+- **Programmatic Metrics Collector**:
+  * A dedicated `BenchmarkService` that uses `System.nanoTime()` for high-precision, sub-millisecond duration measurements.
+  * It will run a predefined pool of academic queries (e.g. "transformer models", "generative ai", "neural networks") in a configurable loop.
+- **CLI Runner**:
+  * Triggered via command-line argument `"run-benchmarks"`.
+  * Outputs a clean, aligned, tabular ASCII report to the console.
+
+---
+
+## Implementation Steps
+
+### 1. Benchmark Service (`com.example.arxivrag.benchmark.BenchmarkService`)
+Orchestrates and calculates the metrics:
+1. Define a pool of 15 diverse academic search queries.
+2. Run a warm-up phase of 10 queries (to allow the JVM JIT compiler to compile hot spots, preventing warm-up bias!).
+3. Execute the actual benchmark loop (e.g. 100 queries) against `VectorStoreGateway.search(new VectorSearchRequest(query, 5))`.
+4. Capture each query's duration in nanoseconds.
+5. Sort the list of durations to calculate the percentiles:
+   - $p_{50}$: Value at index `size * 0.50`.
+   - $p_{95}$: Value at index `size * 0.95`.
+6. Compile and return a `BenchmarkResult` record.
+
+### 2. Command-Line Runner (`com.example.arxivrag.benchmark.BenchmarkCommandLineRunner`)
+Exposes the benchmark via terminal:
+- Listens for `"run-benchmarks"`.
+- Invokes `BenchmarkService.runBenchmark()`.
+- Renders a gorgeous terminal report:
+  ```text
+  ======================================================================
+  VECTOR STORE BENCHMARK REPORT
+  ======================================================================
+  Active Store Profile: [store-pgvector]
+  Total Queries Run   : 100
+  Grounded topK limit : 5
+  ----------------------------------------------------------------------
+  Throughput          : 74.32 QPS (Queries Per Second)
+  Average Latency     : 13.45 ms
+  p50 (Median)        : 10.12 ms
+  p95 (Tail Latency)  : 24.84 ms
+  Min Latency         :  4.12 ms
+  Max Latency         : 84.15 ms
+  ======================================================================
+  ```
+- Shuts down the Spring Boot Tomcat and Hikari context cleanly with status code `0`.
+
+---
+
+## Verification & Testing
+
+We will write unit and smoke tests to guarantee the accuracy of our mathematical calculations and runner bindings.
+
+### Test Case 1: Mathematical Accuracy (`BenchmarkServiceTests`)
+* **Type**: Unit Test
+* **Objective**: Verify that our statistical percentile sorting and throughput calculations are mathematically flawless.
+* **Scenarios**:
+  * **TC 1.1**: Inject a deterministic list of 10 latency measurements (e.g., `10ms`, `20ms`, `30ms`, ..., `100ms`). Assert that:
+    - Minimum is `10.0 ms`.
+    - Maximum is `100.0 ms`.
+    - Average is `55.0 ms`.
+    - $p_{50}$ (median) is exactly `50.0 ms` (or nearest index `50.0 ms`).
+    - $p_{95}$ (tail) is exactly `90.0 ms` (or nearest index `100.0 ms`).
+  * **TC 1.2**: Assert correct QPS throughput calculation for a given total duration.
+
+### Test Case 2: Ingestion Benchmarking
+* **Type**: Unit Test
+* **Objective**: Ensure `BenchmarkService` can also measure bulk-ingestion rates (e.g. papers processed per second).
+
+### Test Case 3: CLI Runner Smoke Test
+* **Type**: Integration Smoke Test
+* **Objective**: Verify that triggering `run-benchmarks` on a running server boots up, computes metrics, prints the tabular ASCII output, and exits with a `0` exit status.
+* **Command**:
+  ```powershell
+  .\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=run-benchmarks" "-Dspring-boot.run.jvmArguments=-Dserver.port=0"
+  ```
