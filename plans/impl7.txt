@@ -1,0 +1,78 @@
+# Step 7 Implementation Plan: Interactive Web Chat Frontend & Benchmarking Telemetry
+
+## Background & Motivation
+In Step 3, we bootstrapped a basic local RAG chat layout. Step 7 expands this into a comprehensive, production-grade, and interactive **Conversational RAG & Agentic Dashboard**. To completely fulfill the project brief and provide a stellar "Vector Store Bake-off" experience, we will add an **Agent Mode Toggle** (letting users switch between standard RAG and autonomous agent tool-calling in-browser) and expose a **Dynamic Benchmarking Telemetry Dashboard** (letting users run query latency benchmarks from their browser and inspect QPS and percentile tables dynamically).
+
+## Scope & Impact
+- **Modules Affected**: `static/assets/app.js`, `static/assets/app.css` (frontend), and introducing a `BenchmarkController` REST endpoint on the backend.
+- **Agnostic Scope**: The UI will dynamically display whichever vector store profile is currently active (`store-pgvector`, `store-milvus`, or `store-chroma`), letting us run live visual comparative benchmarks in-browser!
+
+## Proposed Architecture
+1. **Agent Mode Toggle (Chat Page)**:
+   - Add a stylized sliding toggle pill `[Standard RAG / Autonomous Agent]` to the Chat panel input bar.
+   - If "Agent Mode" is enabled:
+     - The client posts to `/api/chat/agent` instead of `/api/chat`.
+     - Message bubbles parse the returned `🔧 [Agent Thought Trace]` block and render it inside a dedicated, dark-themed, terminal-like ASCII console panel for high-signal debugging.
+2. **REST Benchmarking Telemetry (`/api/benchmark`)**:
+   - Create a `BenchmarkController` exposing `@GetMapping("/api/benchmark")`.
+   - On request: Calls `BenchmarkService.runBenchmark(50, 5)` (executing 50 high-speed, sub-millisecond semantic queries on the active gateway) and returns the compiled `BenchmarkResult` as JSON.
+3. **Interactive Performance Dashboard (Benchmarks Page)**:
+   - Re-wire the existing "Benchmarks" navigation route inside `app.js`.
+   - On navigation: Shows a spinning loading state, queries `/api/benchmark`, and renders an elegant, interactive performance panel.
+   - The panel displays metrics (Throughput QPS, Average, Median $p_{50}$, Tail $p_{95}$, Min, Max) inside a stylized database metric card, representing the live, selected vector database's actual speeds!
+
+---
+
+## Implementation Steps
+
+### 1. Backend REST Controller (`com.example.arxivrag.benchmark.BenchmarkController`)
+Expose the benchmarking telemetry:
+- Annotate with `@RestController` and `@RequestMapping("/api/benchmark")`.
+- Expose `@GetMapping` which invokes `BenchmarkService.runBenchmark(50, 5)` and returns the resulting `BenchmarkResult`.
+
+### 2. Frontend Agent Mode Toggle (`app.js` & `app.css`)
+- **UI Elements**: Add a toggle pill next to the send button:
+  ```html
+  <div class="toggle-container">
+      <input type="checkbox" id="agent-toggle">
+      <label for="agent-toggle">Autonomous Agent Mode</label>
+  </div>
+  ```
+- **Thought Trace Styling**: Add CSS styling for `.agent-trace`:
+  - Dark-themed terminal block (`background: #0f172a`, `color: #38bdf8`), rounded corners, courier monospace font, padding, and subtle indentations.
+- **Client AJAX Routing**:
+  - Read `agentToggle.checked` on form submission.
+  - Route to `fetch("/api/chat/agent")` if checked, otherwise `fetch("/api/chat")`.
+  - Parse and split the returned text: if it starts with the agent trace string, render that section inside `.agent-trace` first, and the remaining grounded text below it.
+
+### 3. Frontend Benchmarking Dashboard (`app.js` & `app.css`)
+- **Navigation Handler**: Update `renderPage()` to check if route is `#/benchmarks` and delegate to `renderBenchmarksPage(page)`.
+- **Dynamic In-Browser Loader**:
+  - `renderBenchmarksPage(page)`: Renders a loading spinner first, then runs `fetch("/api/benchmark")`.
+  - On return: Clears spinner, and renders a magnificent, modern **Database Performance Card** displaying:
+    - Active Vector Store identifier.
+    - Large throughput gauge (e.g. `1422.32 QPS`).
+    - Comparative table for average, median, and tail latencies.
+  - Include an interactive button `[Run Live Performance Test]` to re-trigger the live benchmark anytime!
+
+---
+
+## Verification & Testing
+
+We will write REST controllers and UI verification cases to validate Step 7 completely:
+
+### Test Case 1: REST Telemetry Controller (`BenchmarkControllerIntegrationTests`)
+* **Type**: Integration Test
+* **Active Profile**: `test`
+* **Scenarios**:
+  * **TC 1.1**: Hit `GET /api/benchmark` with MockMvc. Assert status is `OK`, content type is JSON, and returned fields (`activeStoreProfile`, `totalQueries`, `qps`, `p50LatencyMs`) are present, non-null, and structurally valid.
+
+### Test Case 2: UI Agent Toggle & Thought Trace Renders
+* **Type**: Manual/Visual Smoke Test
+* **Scenarios**:
+  * **TC 2.1**: Navigate to `http://localhost:8081/#/chat`, toggle "Autonomous Agent Mode", enter a prompt, and verify that the `🔧 [Agent Thought Trace]` renders beautifully inside the custom terminal element.
+
+### Test Case 3: In-Browser Live Telemetry Bake-Off
+* **Type**: Manual/Visual Smoke Test
+* **Scenarios**:
+  * **TC 3.1**: Navigate to `http://localhost:8081/#/benchmarks`. Confirm the loading spinner appears, resolves the JSON, and successfully populates the active database metrics (QPS, median, tail latency) inside our stylized database performance card!

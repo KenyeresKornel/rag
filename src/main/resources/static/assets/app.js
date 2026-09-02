@@ -136,6 +136,11 @@ function renderPage() {
         return;
     }
 
+    if (page.id === "benchmarks") {
+        renderBenchmarksPage(page);
+        return;
+    }
+
     const metrics = page.metrics
         ? `<div class="metric-grid">${page.metrics.map(([label, value]) => `
             <div class="metric">
@@ -248,16 +253,20 @@ function renderSettingsPage(page) {
 }
 
 /**
- * Renders the Interactive Conversational RAG Chat Page
+ * Renders the Interactive Conversational RAG & Agentic Chat Page
  */
 function renderChatPage(page) {
     pageContent.innerHTML = `
         <div class="chat-layout">
             <div class="chat-messages" id="chat-messages-container">
-                <!-- Chat message bubbles will be dynamically injected here -->
+                <!-- Chat message bubbles injected here -->
             </div>
             <form class="chat-input-area" id="chat-form">
                 <input class="chat-input" id="chat-input" type="text" placeholder="Ask a question grounded by your academic database..." autocomplete="off" required>
+                <label class="agent-toggle-wrapper" for="agent-toggle">
+                    <input type="checkbox" id="agent-toggle">
+                    <span>Agent Mode</span>
+                </label>
                 <button class="primary-button" style="margin:0;" type="submit" id="chat-send-btn">Send</button>
             </form>
         </div>
@@ -266,6 +275,7 @@ function renderChatPage(page) {
     const messagesContainer = document.querySelector("#chat-messages-container");
     const chatForm = document.querySelector("#chat-form");
     const chatInput = document.querySelector("#chat-input");
+    const agentToggle = document.querySelector("#agent-toggle");
 
     // 1. Initial render of existing history
     renderChatHistory(messagesContainer);
@@ -275,6 +285,8 @@ function renderChatPage(page) {
         e.preventDefault();
         const queryText = chatInput.value.trim();
         if (!queryText) return;
+
+        const useAgent = agentToggle.checked;
 
         // Append user query bubble
         chatHistory.push({ sender: "user", text: queryText });
@@ -286,7 +298,9 @@ function renderChatPage(page) {
         renderChatHistory(messagesContainer);
 
         try {
-            const response = await fetch("/api/chat", {
+            // Post to agent or standard RAG endpoint depending on toggle state
+            const targetUrl = useAgent ? "/api/chat/agent" : "/api/chat";
+            const response = await fetch(targetUrl, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -322,9 +336,9 @@ function renderChatHistory(container) {
     if (chatHistory.length === 0) {
         container.innerHTML = `
             <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100%; color:var(--muted); text-align:center; padding: 2rem;">
-                <span style="font-size:2.8rem; margin-bottom:0.75rem;">💬</span>
-                <h3>Conversational arXiv RAG</h3>
-                <p style="max-width: 25rem; font-size:0.92rem; line-height:1.55;">Ask questions about your imported academic papers. The assistant will answer using vector-grounded context and attach citations.</p>
+                <span style="font-size:2.8rem; margin-bottom:0.75rem;">🤖</span>
+                <h3>Conversational arXiv Agent</h3>
+                <p style="max-width: 25rem; font-size:0.92rem; line-height:1.55;">Ask questions about your imported papers. Toggle <strong>Agent Mode</strong> to let the LLM autonomously decide which search tools to call and see its real-time thought trace!</p>
             </div>
         `;
         return;
@@ -352,19 +366,157 @@ function renderChatHistory(container) {
                 `;
             }
 
-            const bubbleClass = msg.isTyping ? "chat-bubble typing" : "chat-bubble";
+            // Split and isolate Agent Thought Trace if present
+            let finalHtml = "";
+            const text = msg.text || "";
+            const traceMarker = "🔧 **[Agent Thought Trace]**";
+            
+            if (text.startsWith(traceMarker)) {
+                // Find where the trace finishes and the answer begins
+                const parts = text.split("According to the");
+                if (parts.length > 1) {
+                    const traceContent = parts[0].replace(traceMarker, "").trim();
+                    const mainAnswer = "According to the" + parts.slice(1).join("According to the");
+                    
+                    finalHtml = `
+                        <div class="agent-trace">${escapeHtml(traceContent)}</div>
+                        <div class="chat-bubble">${escapeHtml(mainAnswer)}</div>
+                    `;
+                } else {
+                    finalHtml = `<div class="chat-bubble">${escapeHtml(text)}</div>`;
+                }
+            } else {
+                finalHtml = `<div class="chat-bubble">${escapeHtml(text)}</div>`;
+            }
+
+            const bubbleClass = msg.isTyping ? "chat-bubble typing" : "";
 
             return `
                 <div class="chat-bubble-wrapper ${msg.sender}">
-                    <div class="${bubbleClass}">${escapeHtml(msg.text)}</div>
+                    ${msg.isTyping ? `<div class="${bubbleClass}">${escapeHtml(msg.text)}</div>` : finalHtml}
                     ${citationsAccordion}
                 </div>
             `;
         })
         .join("");
 
-    // Auto-scroll message container to the absolute bottom
     container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * Renders the Dynamic, In-Browser Benchmarks Telemetry Dashboard Page
+ */
+async function renderBenchmarksPage(page) {
+    pageContent.innerHTML = `
+        <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:22rem; text-align:center; padding: 2rem;" id="benchmark-loader">
+            <div class="spinner"></div>
+            <h3>Running live performance benchmarks...</h3>
+            <p style="color:var(--muted); max-width:25rem; font-size:0.9rem; line-height:1.6;">Triggering 50 concurrent semantic similarity queries on your active vector store to capture latency averages, medians (p50), and tail distributions (p95) dynamically.</p>
+        </div>
+        <div class="hidden" id="benchmark-results-container">
+            <!-- Metric cards and tables injected here -->
+        </div>
+    `;
+
+    const loader = document.querySelector("#benchmark-loader");
+    const resultsContainer = document.querySelector("#benchmark-results-container");
+
+    try {
+        const response = await fetch("/api/benchmark", { headers: { "Accept": "application/json" } });
+        if (!response.ok) {
+            throw new Error(`Benchmark API returned status ${response.status}`);
+        }
+        const data = await response.json();
+        
+        loader.classList.add("hidden");
+        resultsContainer.classList.remove("hidden");
+
+        resultsContainer.innerHTML = `
+            <div>
+                <h2>Performance Bake-Off Dashboard</h2>
+                <p class="placeholder-copy">Programmatic telemetry captured from 50 consecutive search queries against the active vector database.</p>
+                
+                <div class="benchmark-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
+                        <h3 style="margin:0;">Active Database: <span style="color:var(--accent); font-weight:800;">[${escapeHtml(data.activeStoreProfile)}]</span></h3>
+                        <button class="primary-button" style="margin:0;" type="button" id="benchmark-rerun-btn">Re-Run Performance Test</button>
+                    </div>
+                    
+                    <div class="benchmark-gauge-container">
+                        <div class="benchmark-gauge">
+                            <strong>${escapeHtml(data.qps.toFixed(2))}</strong>
+                            <span>Queries Per Sec (QPS)</span>
+                        </div>
+                        <div class="benchmark-gauge">
+                            <strong>${escapeHtml(data.avgLatencyMs.toFixed(2))} ms</strong>
+                            <span>Average Latency</span>
+                        </div>
+                        <div class="benchmark-gauge">
+                            <strong>${escapeHtml(data.p50LatencyMs.toFixed(2))} ms</strong>
+                            <span>p50 (Median)</span>
+                        </div>
+                        <div class="benchmark-gauge">
+                            <strong>${escapeHtml(data.p95LatencyMs.toFixed(2))} ms</strong>
+                            <span>p95 (Tail Latency)</span>
+                        </div>
+                    </div>
+
+                    <table class="benchmark-table">
+                        <thead>
+                            <tr>
+                                <th>Metric Parameter</th>
+                                <th>Measured Value</th>
+                                <th>Description / SLA Interpretation</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Minimum Latency</strong></td>
+                                <td>${escapeHtml(data.minLatencyMs.toFixed(2))} ms</td>
+                                <td>Fastest query execution recorded in this loop.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>p50 Latency (Median)</strong></td>
+                                <td>${escapeHtml(data.p50LatencyMs.toFixed(2))} ms</td>
+                                <td>Median performance boundary: 50% of your queries are faster than this threshold.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Average Latency (Mean)</strong></td>
+                                <td>${escapeHtml(data.avgLatencyMs.toFixed(2))} ms</td>
+                                <td>Calculated average (arithmetic mean) of all 50 search runs.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>p95 Latency (SLA)</strong></td>
+                                <td>${escapeHtml(data.p95LatencyMs.toFixed(2))} ms</td>
+                                <td>SLA boundary: 95% of queries execute faster than this ceiling under peak load.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Maximum Latency</strong></td>
+                                <td>${escapeHtml(data.maxLatencyMs.toFixed(2))} ms</td>
+                                <td>Slowest query execution recorded (typically representing initial database thread-locks).</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        document.querySelector("#benchmark-rerun-btn").addEventListener("click", () => {
+            renderBenchmarksPage(page);
+        });
+
+    } catch (e) {
+        loader.innerHTML = `
+            <span style="font-size:3rem; margin-bottom:1rem;">⚠️</span>
+            <h3>Telemetry Benchmark Failed</h3>
+            <p style="color:var(--danger); max-width:25rem; font-size:0.9rem; line-height:1.6;">${escapeHtml(e.message)}</p>
+            <p style="color:var(--muted); max-width:25rem; font-size:0.86rem; margin-top:0.5rem;">Please ensure the target database container is running and healthy, and that the spring active profile is selected correctly.</p>
+            <button class="primary-button" style="margin-top:1.25rem;" type="button" id="benchmark-retry-btn">Retry Benchmark</button>
+        `;
+        document.querySelector("#benchmark-retry-btn").addEventListener("click", () => {
+            renderBenchmarksPage(page);
+        });
+    }
 }
 
 async function refreshBackendStatus() {
