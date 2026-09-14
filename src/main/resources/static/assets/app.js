@@ -1,8 +1,22 @@
 const pages = [
     {
+        id: "chat",
+        title: "Chat",
+        icon: "💬",
+        summary: "Ask research questions and receive answers grounded with canonical academic citations.",
+        details: ["Ask questions in natural language", "Render inline citations automatically", "Explore resolved paper titles and authors in details drawers"]
+    },
+    {
+        id: "benchmarks",
+        title: "Benchmarks",
+        icon: "📊",
+        summary: "Capture ingestion, query latency, and quality comparison results.",
+        details: ["Track p50/p95 retrieval latency", "Compare vector-store operations", "Record answer-quality evaluations"]
+    },
+    {
         id: "system-status",
         title: "System Status",
-        icon: "S",
+        icon: "⚡",
         summary: "Health and runtime readiness for the Spring Boot backend.",
         details: ["Backend health probe", "Application identity", "Future database/vector-store status"],
         metrics: [
@@ -10,55 +24,6 @@ const pages = [
             ["Relational DB", "Not wired"],
             ["Vector store", "Not wired"]
         ]
-    },
-    {
-        id: "import",
-        title: "Import",
-        icon: "I",
-        summary: "Dataset import controls and statistics for the arXiv metadata slice.",
-        details: ["Upload or reference the dataset file", "Show category/date filters", "Display import progress and counts"]
-    },
-    {
-        id: "papers",
-        title: "Papers",
-        icon: "P",
-        summary: "Browse canonical paper records stored in PostgreSQL.",
-        details: ["List imported papers", "Filter by category, author, and submitted date", "Open paper metadata and citations"]
-    },
-    {
-        id: "search",
-        title: "Search",
-        icon: "Q",
-        summary: "Exercise semantic and structured retrieval before chat generation is added.",
-        details: ["Run top-K semantic search", "Show vector scores", "Resolve vector hits back to paper records"]
-    },
-    {
-        id: "chat",
-        title: "Chat",
-        icon: "C",
-        summary: "Ask research questions and receive answers grounded with canonical academic citations.",
-        details: ["Ask questions in natural language", "Render inline citations automatically", "Explore resolved paper titles and authors in details drawers"]
-    },
-    {
-        id: "vector-stores",
-        title: "Vector Stores",
-        icon: "V",
-        summary: "Inspect and switch between pgvector, Milvus, and Chroma experiments.",
-        details: ["Show active backend", "Compare index/config settings", "Display ingestion coverage by store"]
-    },
-    {
-        id: "benchmarks",
-        title: "Benchmarks",
-        icon: "B",
-        summary: "Capture ingestion, query latency, and quality comparison results.",
-        details: ["Track p50/p95 retrieval latency", "Compare vector-store operations", "Record answer-quality evaluations"]
-    },
-    {
-        id: "settings",
-        title: "Settings",
-        icon: "G",
-        summary: "Central location for runtime configuration visibility.",
-        details: ["Show active Spring profiles", "Expose non-secret feature flags", "Keep secrets and tokens hidden"]
     }
 ];
 
@@ -68,8 +33,6 @@ const pageContent = document.querySelector("#page-content");
 const environmentPill = document.querySelector("#environment-pill");
 const globalError = document.querySelector("#global-error");
 const healthRefreshButton = document.querySelector("#health-refresh-button");
-let runtimeConfig = null;
-let runtimeConfigError = null;
 let backendHealth = {
     status: "checking",
     message: "Checking backend health...",
@@ -115,16 +78,11 @@ function renderNavigation(activePageId) {
 }
 
 function renderPage() {
-    const route = window.location.hash.replace("#/", "") || "system-status";
+    const route = window.location.hash.replace("#/", "") || "chat";
     const page = pages.find((candidate) => candidate.id === route) ?? pages[0];
 
     pageTitle.textContent = page.title;
     renderNavigation(page.id);
-
-    if (page.id === "settings") {
-        renderSettingsPage(page);
-        return;
-    }
 
     if (page.id === "system-status") {
         renderSystemStatusPage(page);
@@ -140,31 +98,6 @@ function renderPage() {
         renderBenchmarksPage(page);
         return;
     }
-
-    const metrics = page.metrics
-        ? `<div class="metric-grid">${page.metrics.map(([label, value]) => `
-            <div class="metric">
-                <strong>${value}</strong>
-                <span>${label}</span>
-            </div>
-        `).join("")}</div>`
-        : "";
-
-    pageContent.innerHTML = `
-        <div class="hero-grid">
-            <div>
-                <h2>${page.title}</h2>
-                <p class="placeholder-copy">${page.summary}</p>
-                <ul class="feature-list">
-                    ${page.details.map((detail) => `<li><strong>${detail}</strong><br><span>Placeholder area reserved for the upcoming feature story.</span></li>`).join("")}
-                </ul>
-            </div>
-            <aside>
-                <span class="status-badge">Placeholder</span>
-                ${metrics}
-            </aside>
-        </div>
-    `;
 }
 
 function renderSystemStatusPage(page) {
@@ -211,47 +144,6 @@ function renderSystemStatusPage(page) {
     `;
 }
 
-function renderSettingsPage(page) {
-    const configMarkup = runtimeConfig
-        ? `
-            <div class="config-grid">
-                <div class="config-item">
-                    <span>Application</span>
-                    <strong>${escapeHtml(runtimeConfig.applicationName)}</strong>
-                </div>
-                <div class="config-item">
-                    <span>Configured profile</span>
-                    <strong>${escapeHtml(runtimeConfig.configuredProfile)}</strong>
-                </div>
-                <div class="config-item">
-                    <span>Active Spring profiles</span>
-                    <strong>${escapeHtml(runtimeConfig.activeProfiles.join(", "))}</strong>
-                </div>
-            </div>
-            <h3>Feature flags</h3>
-            <ul class="feature-flags">
-                ${runtimeConfig.features.map((feature) => `
-                    <li>
-                        <span>${escapeHtml(feature.name)}</span>
-                        <strong class="${feature.enabled ? "enabled" : "disabled"}">
-                            ${feature.enabled ? "Enabled" : "Disabled"}
-                        </strong>
-                    </li>
-                `).join("")}
-            </ul>
-            <p class="safe-config-note">Only whitelisted runtime values are shown. Secrets, API keys, passwords, and tokens are never returned by this endpoint.</p>
-        `
-        : `<p class="placeholder-copy">${runtimeConfigError ?? "Loading runtime configuration..."}</p>`;
-
-    pageContent.innerHTML = `
-        <div>
-            <h2>${page.title}</h2>
-            <p class="placeholder-copy">${page.summary}</p>
-            ${configMarkup}
-        </div>
-    `;
-}
-
 /**
  * Renders the Interactive Conversational RAG & Agentic Chat Page
  */
@@ -261,14 +153,21 @@ function renderChatPage(page) {
             <div class="chat-messages" id="chat-messages-container">
                 <!-- Chat message bubbles injected here -->
             </div>
-            <form class="chat-input-area" id="chat-form">
-                <input class="chat-input" id="chat-input" type="text" placeholder="Ask a question grounded by your academic database..." autocomplete="off" required>
-                <label class="agent-toggle-wrapper" for="agent-toggle">
-                    <input type="checkbox" id="agent-toggle">
-                    <span>Agent Mode</span>
-                </label>
-                <button class="primary-button" style="margin:0;" type="submit" id="chat-send-btn">Send</button>
-            </form>
+            <div class="chat-input-wrapper">
+                <form class="chat-input-area" id="chat-form">
+                    <input class="chat-input" id="chat-input" type="text" placeholder="Ask a question grounded by your academic database..." autocomplete="off" required>
+                    <label class="agent-toggle-wrapper" for="agent-toggle">
+                        <input type="checkbox" id="agent-toggle">
+                        <span>Agent Mode</span>
+                    </label>
+                    <button class="chat-send-btn" type="submit" id="chat-send-btn" aria-label="Send message">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="send-icon">
+                            <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </form>
+                <div class="chat-footer-note">arXiv RAG Lab can make mistakes. Verify important info.</div>
+            </div>
         </div>
     `;
 
@@ -558,26 +457,8 @@ function updateBackendHealthUi() {
     environmentPill.classList.toggle("ok", isUp);
     environmentPill.classList.toggle("error", backendHealth.status !== "checking" && !isUp);
 
-    if ((window.location.hash.replace("#/", "") || "system-status") === "system-status") {
-        renderPage();
-    }
-}
-
-async function refreshRuntimeConfig() {
-    try {
-        const response = await fetch("/api/runtime-config", {headers: {"Accept": "application/json"}});
-        if (!response.ok) {
-            throw new Error(`Runtime config endpoint returned ${response.status}`);
-        }
-
-        runtimeConfig = await response.json();
-        runtimeConfigError = null;
-    } catch {
-        runtimeConfig = null;
-        runtimeConfigError = "Runtime configuration is unavailable. Check backend health, then use Refresh to try again.";
-    }
-
-    if ((window.location.hash.replace("#/", "") || "system-status") === "settings") {
+    const currentRoute = window.location.hash.replace("#/", "") || "chat";
+    if (currentRoute === "system-status") {
         renderPage();
     }
 }
@@ -591,14 +472,11 @@ window.addEventListener("unhandledrejection", () => {
 });
 healthRefreshButton.addEventListener("click", () => {
     refreshBackendStatus();
-    refreshRuntimeConfig();
 });
 pageContent.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-health-refresh]")) {
         refreshBackendStatus();
-        refreshRuntimeConfig();
     }
 });
 renderPage();
 refreshBackendStatus();
-refreshRuntimeConfig();
